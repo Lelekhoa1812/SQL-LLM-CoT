@@ -1,5 +1,5 @@
-from gradio_client import Client
-import asyncio, logging, re
+from gradio_client import Client, GradioClientError
+import asyncio, logging, re, os
 from utils import db_schema
 
 log = logging.getLogger("qwen-bot")
@@ -13,7 +13,8 @@ _PROMPT_SYS = (
 
 class QwenBot:
     def __init__(self):
-        self.client   = Client("Qwen/Qwen3-Demo")
+        self.client   = Client("Qwen/Qwen3-Demo", hf_token=token or None)
+        token = os.getenv("HF_TOKEN")
         self.settings = {
             "model": "qwen3-235b-a22b",
             "sys_prompt": _PROMPT_SYS,
@@ -22,12 +23,17 @@ class QwenBot:
 
     # ---------- helpers ----------
     def _call(self, prompt: str) -> str:
-        res = self.client.predict(
-            input_value=prompt,
-            settings_form_value=self.settings,
-            api_name="/add_message",
-        )
-        return res[0]
+        try:
+            res = self.client.predict(
+                input_value=prompt,
+                settings_form_value=self.settings,
+                api_name="/add_message",
+            )
+            return res[0]
+        except GradioClientError as e:
+            # Log chi tiết và gói gọn cho FastAPI
+            log.error("⚠️ Gradio call failed: %s", e)
+            raise RuntimeError("Qwen3 service tạm thời không phản hồi")
 
     # ---------- phase 1: generate SQL candidates ----------
     async def generate_sql_thoughts(self, question: str) -> tuple[str, list[str]]:
