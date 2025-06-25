@@ -4,7 +4,6 @@ FROM python:3.12-slim
 # ─── Environment Setup ─────────────────────────────────────────
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    TRANSFORMERS_CACHE=/app/model_cache \
     HF_HOME=/app/.cache/huggingface \
     SENTENCE_TRANSFORMERS_HOME=/app/.cache/huggingface/sentence-transformers
 

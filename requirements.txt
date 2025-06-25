@@ -8,4 +8,5 @@ sqlalchemy
 pymysql
 pandas
 accelerate
+einops
 # jina              # Local usage only
