@@ -32,7 +32,7 @@ RUN mkdir -p /app \
 
 # ─── Model preloader ───────────────────────────────────────────
 RUN python -c "from transformers import AutoModelForSequenceClassification; AutoModelForSequenceClassification.from_pretrained('jinaai/jina-reranker-v2-base-multilingual', revision='8469b0a', trust_remote_code=True)"
-RUN python -c "from transformers import AutoModelForCausalLM; AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-4B', trust_remote_code=True)"
+# RUN python -c "from transformers import AutoModelForCausalLM; AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-4B', trust_remote_code=True)"
 
 # Copy project files
 COPY . .
