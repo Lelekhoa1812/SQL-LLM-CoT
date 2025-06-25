@@ -21,12 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# Create non-root user (user:user = 1000:1000)
+# Create non-root user
 RUN useradd -m -u 1000 user
 
-# Create and assign ownership to HF model cache
-RUN mkdir -p /app/.cache/huggingface /app/model_cache && \
-    chown -R user:user /app
+# Create all needed cache paths and fix permissions for non-root user
+RUN mkdir -p /app \
+    && mkdir -p /app/.cache/huggingface/hub \
+    && mkdir -p /app/model_cache \
+    && chown -R user:user /app
 
 # ─── Model preloader ───────────────────────────────────────────
 RUN python -c "from transformers import AutoModelForSequenceClassification; AutoModelForSequenceClassification.from_pretrained('jinaai/jina-reranker-v2-base-multilingual', revision='8469b0a', trust_remote_code=True)"
