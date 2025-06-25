@@ -13,8 +13,8 @@ _PROMPT_SYS = (
 
 class QwenBot:
     def __init__(self):
-        self.client   = Client("Qwen/Qwen3-Demo", hf_token=token or None)
         token = os.getenv("HF_TOKEN")
+        self.client   = Client("Qwen/Qwen3-Demo", hf_token=token or None)
         self.settings = {
             "model": "qwen3-235b-a22b",
             "sys_prompt": _PROMPT_SYS,
