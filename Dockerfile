@@ -21,20 +21,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# ─── Create Cache Dirs & Fix Permissions ───────────────────────
-RUN mkdir -p /app/model_cache /app/.cache/huggingface/sentence-transformers && \
-    adduser --disabled-password --gecos "" --uid 1000 user && \
-    chown -R user:user /app/model_cache /app/.cache /app
+# Create non-root user (user:user = 1000:1000)
+RUN useradd -m -u 1000 user
+
+# Create and assign ownership to HF model cache
+RUN mkdir -p /app/.cache/huggingface /app/model_cache && \
+    chown -R user:user /app
 
 # ─── Model preloader ───────────────────────────────────────────
-
 RUN python -c "from transformers import AutoModelForSequenceClassification; AutoModelForSequenceClassification.from_pretrained('jinaai/jina-reranker-v2-base-multilingual', revision='8469b0a', trust_remote_code=True)"
+RUN python -c "from transformers import AutoModelForCausalLM; AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-4B', trust_remote_code=True)"
 
-# ─── Switch to Non-root User ───────────────────────────────────
-USER user
-
-# ─── Copy Application Files ────────────────────────────────────
+# Copy project files
 COPY . .
+
+# Switch to non-root user (important AFTER chown)
+USER user
 
 # ─── Run Server ────────────────────────────────────────────────
 CMD ["gunicorn", "app:app", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7860"]
