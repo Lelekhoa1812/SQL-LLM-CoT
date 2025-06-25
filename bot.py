@@ -1,4 +1,4 @@
-from gradio_client import Client, GradioClientError
+from gradio_client import Client
 import asyncio, logging, re, os
 from utils import db_schema
 
@@ -30,7 +30,7 @@ class QwenBot:
                 api_name="/add_message",
             )
             return res[0]
-        except GradioClientError as e:
+        except Exception as e:
             # Log chi tiết và gói gọn cho FastAPI
             log.error("⚠️ Gradio call failed: %s", e)
             raise RuntimeError("Qwen3 service tạm thời không phản hồi")
