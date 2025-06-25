@@ -3,7 +3,7 @@ import asyncio, logging, re
 from utils import db_schema
 
 log = logging.getLogger("qwen-bot")
-logger.info("🚀 Starting Qwen bot...")
+log.info("🚀 Starting Qwen bot...")
 
 _PROMPT_SYS = (
     "Bạn là trợ lý phân tích dữ liệu bán lẻ, nói tiếng Việt, "
