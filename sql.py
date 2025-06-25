@@ -1,11 +1,8 @@
-import os
-import torch
-import logging
+import torch, numpy as np, logging
 from transformers import AutoModelForSequenceClassification
-import numpy as np
 
 logger = logging.getLogger("sql-jina")
-logger.info("🚀 Starting SQL Reranker...")
+logger.info("🚀 Starting SQL reranker...")
 
 class SQLReranker:
     def __init__(self):
@@ -19,8 +16,11 @@ class SQLReranker:
         ).to("cuda" if torch.cuda.is_available() else "cpu")
         self.model.eval()
 
-    def rerank(self, query: str, candidates: list):
-        pairs = [[query, sql] for sql in candidates]
+    def rerank(self, query: str, sqls: list[str]) -> str:
+        if len(sqls) == 1:
+            return sqls[0]
+        pairs = [[query, s] for s in sqls]
         scores = self.model.compute_score(pairs, max_length=512)
-        best_idx = int(np.argmax(scores))
-        return candidates[best_idx]
+        best = sqls[int(np.argmax(scores))]
+        logger.info("[Jina]🔝 Reranker chọn: %s", best)
+        return best

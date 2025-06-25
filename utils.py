@@ -1,16 +1,45 @@
-import os
-import pandas as pd
-from sqlalchemy import create_engine
+import functools, logging, pandas as pd
+from sqlalchemy import create_engine, inspect, text
 
-# DB connection
+# Prefixes
 user = os.getenv("DB_USER")
 pw = os.getenv("DB_PASSWORD")
 host = os.getenv("DB_HOST")
 port = os.getenv("DB_PORT", "3306")
 db = os.getenv("DB_NAME")
-engine = create_engine(f"mysql+pymysql://{user}:{pw}@{host}:{port}/{db}")
 
-# Execute and fetch
-def execute_sql(sql: str):
-    df = pd.read_sql(sql + " LIMIT 100", engine)
+# ---------- MySQL Engine ----------
+DB_CFG = {
+    "user":     user,
+    "password": pw,
+    "host":     host,
+    "port":     "3306",
+    "db":       db,
+}
+ENGINE = create_engine(
+    f"mysql+pymysql://{DB_CFG['user']}:{DB_CFG['password']}@"
+    f"{DB_CFG['host']}:{DB_CFG['port']}/{DB_CFG['db']}",
+    pool_recycle=3600,
+)
+
+# ---------- Logging ----------
+log = logging.getLogger("utils-service")
+log.info("🚀 Starting utils...")
+
+# ---------- Simple in-process LRU cache ----------
+@functools.lru_cache(maxsize=32)
+def _cached_query(sql: str) -> list[dict]:
+    log.info(f"⚡ [UTILS] Cache MISS → chạy SQL: {sql[:100]}...")
+    df = pd.read_sql(text(sql), con=ENGINE)
     return df.to_dict(orient="records")
+
+def execute_sql(sql: str) -> list[dict]:
+    return _cached_query(sql)
+
+# ---------- Introspect schema once & cache ----------
+@functools.cache
+def db_schema() -> dict[str, list[str]]:
+    insp = inspect(ENGINE)
+    schema = {tbl: [col["name"] for col in insp.get_columns(tbl)] for tbl in insp.get_table_names()}
+    log.info("🎯 [UTILS] Lược đồ DB đã cache: %s", schema.keys())
+    return schema
