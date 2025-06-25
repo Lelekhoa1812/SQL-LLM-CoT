@@ -26,6 +26,10 @@ RUN mkdir -p /app/model_cache /app/.cache/huggingface/sentence-transformers && \
     adduser --disabled-password --gecos "" --uid 1000 user && \
     chown -R user:user /app/model_cache /app/.cache /app
 
+# ─── Model preloader ───────────────────────────────────────────
+
+RUN python -c "from transformers import AutoModelForSequenceClassification; AutoModelForSequenceClassification.from_pretrained('jinaai/jina-reranker-v2-base-multilingual', revision='abcd1234', trust_remote_code=True)"
+
 # ─── Switch to Non-root User ───────────────────────────────────
 USER user
 

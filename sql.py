@@ -10,8 +10,10 @@ logger.info("🚀 Starting SQL Reranker...")
 class SQLReranker:
     def __init__(self):
         model_name = 'jinaai/jina-reranker-v2-base-multilingual'
+        revision = '8469b0a' # safe commit hash
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
+            revision=revision,
             torch_dtype="auto",
             trust_remote_code=True
         ).to("cuda" if torch.cuda.is_available() else "cpu")
