@@ -7,4 +7,5 @@ torch
 sqlalchemy
 pymysql
 pandas
+accelerate
 # jina              # Local usage only
