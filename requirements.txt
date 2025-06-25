@@ -1,9 +1,10 @@
 # requirements.txt
 fastapi
 uvicorn[standard]
+gunicorn
 transformers
 torch
 sqlalchemy
 pymysql
 pandas
-# jina # Use only for local serving
+# jina              # Local usage only
