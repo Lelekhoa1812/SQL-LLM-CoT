@@ -28,7 +28,7 @@ RUN mkdir -p /app/model_cache /app/.cache/huggingface/sentence-transformers && \
 
 # ─── Model preloader ───────────────────────────────────────────
 
-RUN python -c "from transformers import AutoModelForSequenceClassification; AutoModelForSequenceClassification.from_pretrained('jinaai/jina-reranker-v2-base-multilingual', revision='abcd1234', trust_remote_code=True)"
+RUN python -c "from transformers import AutoModelForSequenceClassification; AutoModelForSequenceClassification.from_pretrained('jinaai/jina-reranker-v2-base-multilingual', revision='8469b0a', trust_remote_code=True)"
 
 # ─── Switch to Non-root User ───────────────────────────────────
 USER user
