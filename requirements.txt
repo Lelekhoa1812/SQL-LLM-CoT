@@ -9,4 +9,5 @@ pymysql
 pandas
 accelerate
 einops
+gradio_client
 # jina              # Local usage only
