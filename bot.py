@@ -8,36 +8,27 @@ log.info("🚀 Starting Qwen bot...")
 
 _SYSTEM_PROMPT = (
     "Bạn là trợ lý phân tích dữ liệu bán lẻ, nói tiếng Việt, "
-    "thành thạo SQL MySQL, luôn suy nghĩ mạch lạc và có hệ thống (chain-of-thoughts) "
-    "nhưng CHỈ hiển thị kết quả cuối cùng cho người dùng."
-)
-
-_MODEL_SEL = os.getenv(
-    "QWEN_MODEL_SELECTION",
-    "Qwen3-8B - Qwen3-8B - Largest model with highest capabilities"
+    "thành thạo SQL, suy nghĩ mạch lạc và có hệ thống "
+    "CHỈ hiển thị kết quả cuối cùng cho người dùng."
 )
 
 class QwenBot:
     def __init__(self):
         token = os.getenv("HF_TOKEN")
-        self.client = Client("VIDraft/Qwen3-8B", hf_token=token or None)
+        self.client = Client("kz919/Qwen3-0.6B-Zero-GPU", hf_token=token or None)
         self.settings = {
-            "system_prompt": _SYSTEM_PROMPT,
-            "model_selection": _MODEL_SEL,
-            "max_tokens": 512,
+            "system_message": _SYSTEM_PROMPT,
+            "max_tokens": 1024,
             "temperature": 0.7,
-            "top_k": 40,
             "top_p": 0.9,
-            "repetition_penalty": 1.1,
         }
         # Build-up Phase: Run once on start-up
         asyncio.run(self._build_up())
 
-    # gọi /generate endpoint, trả về (reply, new_history)
-    def _generate(self, history: list, **overrides):
-        data = {"history": history, **self.settings, **overrides}
-        out = self.client.predict(**data, api_name="/generate")
-        return out  # (reply:str, history:tuple)
+    # Single prompt call to /chat
+    def _generate(self, message: str, **overrides):
+        data = {"message": message, **self.settings, **overrides}
+        return self.client.predict(**data, api_name="/chat") 
     
     # Build up task (looping 5 times)
     async def _build_up(self, rounds: int = 5):
