@@ -26,9 +26,16 @@ class QwenBot:
         asyncio.run(self._build_up())
 
     # Single prompt call to /chat
-    def _generate(self, message: str, **overrides):
-        data = {"message": message, **self.settings, **overrides}
-        return self.client.predict(**data, api_name="/chat") 
+    def _generate(self, message: str, virtual_history: list[str] = None, **overrides):
+        parts = [f"Hệ thống: {self.settings['system_message']}"]
+        if virtual_history: # Cache from historical resp (STM)
+            parts.extend(virtual_history)
+        parts.append(f"Người dùng: {message}")
+        full_prompt = "\n".join(parts)
+        # JSON body sending over
+        data = {"message": full_prompt, **self.settings, **overrides}
+        return self.client.predict(**data, api_name="/chat")
+ 
     
     # Build up task (looping 5 times)
     async def _build_up(self, rounds: int = 5):
@@ -42,7 +49,8 @@ class QwenBot:
             "Hãy mô tả ngắn gọn bằng tiếng Việt về chức năng của từng bảng, "
             "cách liên kết giữa chúng và các loại truy vấn thường gặp."
         )
-        reply, history = await asyncio.to_thread(self._generate, [], message=prompt)
+        reply = await asyncio.to_thread(self._generate, message=prompt, virtual_history=history)
+        history.append(f"Người dùng: {prompt}"); history.append(f"AI: {reply}") # STM save-up
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [{"summary": reply}], reply)
         log.info("[Qwen - Build-up 0] Đã lưu tổng quan schema")
         # Recursive iteration
@@ -54,9 +62,8 @@ class QwenBot:
                 "ngành hàng, sản phẩm. Viết ra các câu hỏi mới bằng tiếng Việt, "
                 "sau đó tạo SQL tương ứng để chuẩn bị truy vấn (dù không cần kết quả ngay)."
             )
-            follow_reply, history = await asyncio.to_thread(
-                self._generate, history, user_message=followup
-            )
+            follow_reply = await asyncio.to_thread(self._generate, message=followup, virtual_history=history)
+            history.append(f"Người dùng: {prompt}"); history.append(f"AI: {reply}") # STM save-up
             # Save CoT reasoning to LTM
             questions = re.findall(r"Câu hỏi: (.+?)\n", follow_reply)
             queries = re.findall(r"SELECT .*?;", follow_reply, flags=re.I | re.S)
