@@ -24,7 +24,7 @@ async def query(req: Query):
     log.info(f"[App] 📥 Incoming question: {req.question}")
     try:
         sql, rows, answer = await bot.refine_until_valid(
-            req.question, execute_sql, rank.rerank, max_loops=5
+            req.question, execute_sql, rank.rerank, max_loops=10
         )
         log.info(f"[App] ✅ SQL: {sql}\nTop-rows: {rows[:1]}\nAnswer: {answer}")
         return {

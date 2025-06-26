@@ -34,7 +34,11 @@ def _cached_query(sql: str) -> list[dict]:
     return df.to_dict(orient="records")
 
 def execute_sql(sql: str) -> list[dict]:
-    return _cached_query(sql)
+    try:
+        return _cached_query(sql)
+    except Exception as e:
+        log.error("⚠️ SQL failed: %s", e)
+        raise
 
 # ---------- Introspect schema once & cache ----------
 @functools.cache
