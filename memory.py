@@ -18,10 +18,12 @@ def add_stm(question: str, resp: dict):
 
 # -------- LTM: MongoDB + embeddings -----------
 MONGO_URI = os.getenv("MONGO_URI")
+DB_NAME = os.getenv("MONGO_DB_NAME", "cpg_ltm") # Fallback name
 mongo = MongoClient(MONGO_URI)
-db = mongo.get_default_database()
+db = mongo[DB_NAME]
 ltm_coll = db["long_term_memory"]
 
+# Vector embedding model loader
 EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 
 def _embed(text: str) -> np.ndarray:
