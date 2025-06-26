@@ -25,6 +25,11 @@ class QwenBot:
         # Build-up Phase: Run once on start-up
         asyncio.run(self._build_up())
 
+    # simple single-turn final answer generation
+    def _call(self, message: str) -> str:
+        data = {"message": message, **self.settings}
+        return self.client.predict(**data, api_name="/chat")
+
     # Single prompt call to /chat
     def _generate(self, message: str, virtual_history: list[str] = None, **overrides):
         parts = [f"Hệ thống: {self.settings['system_message']}"]
@@ -88,7 +93,7 @@ class QwenBot:
 
     # ---------- phase 2: craft natural-language answer ----------
     async def generate_answer(self, question: str, data: list[dict], thoughts: str) -> str:
-        preview = str(data[:10])  # Avoid full large table, trim to 10 rows
+        preview = str(data[:40])  # Avoid full large table, trim to 10 rows
         prompt = (f"Câu hỏi gốc: {question}\nKết quả truy vấn (mẫu): {preview}\n"
                   f"Hãy trả lời ngắn gọn, chính xác bằng tiếng Việt.")
         ans = await asyncio.to_thread(self._call, prompt)
