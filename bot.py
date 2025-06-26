@@ -58,6 +58,7 @@ class QwenBot:
         for e in existing:
             summary = f"Tôi nhớ: '{e['question']}' → SQL: {e['sql']}"
             self.chat_history.append((summary, e['answer'] or ""))
+            log.info(f"[Qwen - Seed] Memory: '{e['question']}' → SQL: {e['sql']}")
         
         # 2) describe schema
         schema = db_schema()
@@ -70,7 +71,7 @@ class QwenBot:
         )
         summary = await asyncio.to_thread(self._generate, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
-        log.info("[Qwen Build-up 0] Lưu xong schema summary")
+        log.info(f"[Qwen - Build-up 0] Saved schema summary {summary}")
         
         # 3) CoT enrichment rounds
         for i in range(1, rounds + 1):
@@ -85,6 +86,7 @@ class QwenBot:
             sqls      = re.findall(r"(SELECT .*?;)", cot, flags=re.IGNORECASE|re.DOTALL)
             # save the entire CoT blob
             memory.add_ltm_entry(f"__BUILDUP_ROUND_{i}__", "", [], cot)
+            log.info(f"[Qwen - Build-up {i}] CoT: {cot}")
             # for each Q→SQL, rerank, exec & reason
             for q, raw_sql in zip(questions, sqls):
                 best_sql = self.reranker.rerank(q, [raw_sql])  # single candidate
@@ -97,8 +99,8 @@ class QwenBot:
                 reasoning = await asyncio.to_thread(self._generate, reason_prompt)
                 # persist
                 memory.add_ltm_entry(q, best_sql, rows, reasoning)
-                log.info(f"[Build-up {i}] Saved Q→SQL→Reason for: {q[:30]}…")
-        log.info(f"[Build-up] ✅ Hoàn tất {rounds} vòng enrichment")
+                log.info(f"[Qwen - Build-up {i}] Saved Q→SQL→Reason for: {q[:30]}…")
+        log.info(f"[Qwen - Build-up] ✅ Hoàn tất {rounds} vòng enrichment")
 
     # Phase 1: generate SQL thoughts
     async def generate_sql_thoughts(self, question: str):
@@ -111,6 +113,7 @@ class QwenBot:
         )
         raw = await asyncio.to_thread(self._generate, prompt)
         sqls = re.findall(r"(SELECT .*?;)", raw, flags=re.IGNORECASE|re.DOTALL)
+        log.info(f"[Qwen - SQL] {sqls}")
         return raw, [s.replace("\n"," ").strip() for s in sqls]
 
     # Phase 2: generate concise answer
@@ -124,7 +127,9 @@ class QwenBot:
             f"Kết quả mẫu: {preview}\n"
             "Hãy trả lời ngắn gọn và chính xác bằng tiếng Việt."
         )
-        return await asyncio.to_thread(self._call, prompt)
+        res = await asyncio.to_thread(self._call, prompt)
+        log.info(f"[Qwen - Answer] {res}")
+        return res
 
     # Phase 3: refine + caching
     async def refine_until_valid(
