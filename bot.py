@@ -42,7 +42,7 @@ class QwenBot:
             "Hãy mô tả ngắn gọn bằng tiếng Việt về chức năng của từng bảng, "
             "cách liên kết giữa chúng và các loại truy vấn thường gặp."
         )
-        reply, history = await asyncio.to_thread(self._generate, [], user_message=prompt)
+        reply, history = await asyncio.to_thread(self._generate, [], message=prompt)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [{"summary": reply}], reply)
         log.info("[Qwen - Build-up 0] Đã lưu tổng quan schema")
         # Recursive iteration
