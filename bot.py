@@ -84,7 +84,7 @@ class QwenBot:
     # ---------- phase 1: generate SQL candidates ----------
     async def generate_sql_thoughts(self, question: str):
         prompt = (
-            f"Dựa trên lược đồ và kiến thức đã lưu, tạo TỐI ĐA 6 câu SQL MySQL "
+            f"Dựa trên lược đồ và kiến thức đã lưu, tạo TỐI ĐA 6 câu truy vấn SQL "
             f"để trả lời: {question}"
         )
         raw, _ = await asyncio.to_thread(self._generate, [], user_message=prompt)
@@ -110,7 +110,7 @@ class QwenBot:
         if ltms:
             e = ltms[0]
             memory.add_stm(question, e)
-            log.info("[Qwen - LTM] Trả kết quả từ LTM")
+            log.info("[Qwen - LTM] Trả kết quả từ LTM ", {e["sql"]})
             return e["sql"], e["rows"], e["answer"]
         # 3) Fallback loop
         for attempt in range(1, max_loops+1):
