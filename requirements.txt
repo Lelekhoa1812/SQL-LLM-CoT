@@ -3,11 +3,14 @@ fastapi
 uvicorn[standard]
 gunicorn
 transformers
+sentence-transformers
 torch
 sqlalchemy
 pymysql
 pandas
 accelerate
 einops
-gradio_client
+cachetools
+pymongo
+gradio_client       # Server can't load Qwen3
 # jina              # Local usage only
