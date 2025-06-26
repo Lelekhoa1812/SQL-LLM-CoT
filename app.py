@@ -21,12 +21,17 @@ class Query(BaseModel):
 
 @app.post("/query")
 async def query(req: Query):
+    log.info(f"[App] 📥 Incoming question: {req.question}")
     try:
         sql, rows, answer = await bot.refine_until_valid(
             req.question, execute_sql, rank.rerank, max_loops=5
         )
-        log.info(f"[App] sql: {sql}, rows: {rows[:5]}, answer: {answer}")
-        return {"sql": sql, "rows": rows, "answer": answer}
+        log.info(f"[App] ✅ SQL: {sql}\nTop-rows: {rows[:1]}\nAnswer: {answer}")
+        return {
+            "sql": sql,
+            "rows": rows,
+            "answer": answer
+        }
     except Exception as e:
-        log.error("[App] ❌ %s", e)
+        log.exception("[App] ❌ Failed to answer")
         raise HTTPException(status_code=500, detail=str(e))

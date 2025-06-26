@@ -38,17 +38,18 @@ class QwenBot:
     async def _build_up(self, rounds: int = 5):
         schema = db_schema()
         schema_txt = "\n".join(f"{t}({', '.join(c)})" for t, c in schema.items())
-
+        # Prompt engineering
         prompt = (
             "Dưới đây là cấu trúc database hệ thống doanh số:\n\n"
             f"{schema_txt}\n\n"
             "Hãy mô tả ngắn gọn bằng tiếng Việt về chức năng của từng bảng, "
             "cách liên kết giữa chúng và các loại truy vấn thường gặp."
         )
+        # Generate re-promptings
         reply = await asyncio.to_thread(self._generate, prompt)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [{"summary": reply}], reply)
         log.info("[Qwen - Build-up 0] Đã lưu tổng quan schema")
-
+        # Iterate CoT for 5 loops
         for i in range(1, rounds + 1):
             log.info(f"[Qwen - Build-up {i}] Reasoning round {i}...")
             followup = (
@@ -58,17 +59,17 @@ class QwenBot:
                 "sau đó tạo SQL tương ứng để chuẩn bị truy vấn (dù không cần kết quả ngay)."
             )
             follow_reply = await asyncio.to_thread(self._generate, followup)
+            log.info(f"[Qwen - Build-up {i}] Thought: {follow_reply}")
             memory.add_ltm_entry(
                 f"__BUILDUP_ROUND_{i}__", "", [{"thoughts": follow_reply}], follow_reply
             )
-
+            # Clean result
             questions = re.findall(r"Câu hỏi: (.+?)\n", follow_reply)
             queries = re.findall(r"SELECT .*?;", follow_reply, flags=re.I | re.S)
             for q, sql in zip(questions, queries):
                 memory.add_ltm_entry(q, sql, [], "Chưa có kết quả – chỉ ghi nhận SQL")
                 log.info(f"[Qwen - Build-up {i}] Saved question → SQL: {q[:40]}...")
-
-        log.info("[Qwen - Build-up] ✅ Hoàn tất {rounds} vòng suy luận")
+        log.info(f"[Qwen - Build-up] ✅ Hoàn tất {rounds} vòng suy luận")
 
     # Phase 1: generate SQL thoughts
     async def generate_sql_thoughts(self, question: str):
@@ -94,14 +95,14 @@ class QwenBot:
         if stm := memory.get_stm(question):
             log.info("[Qwen - STM] Trả kết quả nhanh")
             return stm["sql"], stm["rows"], stm["answer"]
-
+        # Use best matching (KNN similarity score) and save to LTM
         ltms = memory.retrieve_ltm(question, top_k=1)
         if ltms:
             e = ltms[0]
             memory.add_stm(question, e)
             log.info("[Qwen - LTM] Trả kết quả từ LTM ", {e["sql"]})
             return e["sql"], e["rows"], e["answer"]
-
+        # Refine data in final CoT loop of 3
         for attempt in range(1, max_loops + 1):
             thoughts, cands = await self.generate_sql_thoughts(question)
             best = rerank_fn(question, cands)
