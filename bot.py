@@ -15,50 +15,40 @@ _SYSTEM_PROMPT = (
 class QwenBot:
     def __init__(self):
         token = os.getenv("HF_TOKEN")
-        self.client = Client("kz919/Qwen3-0.6B-Zero-GPU", hf_token=token or None)
-        self.settings = {
-            "system_message": _SYSTEM_PROMPT,
-            "max_tokens": 1024,
-            "temperature": 0.7,
-            "top_p": 0.9,
-        }
-        # Build-up Phase: Run once on start-up
+        self.client = Client("mikeee/qwen-7b-chat", hf_token=token or None)
+        self.chat_history: list[tuple[str, str]] = []  # STM-style memory
+        self.system_prompt = _SYSTEM_PROMPT
         asyncio.run(self._build_up())
 
-    # simple single-turn final answer generation
+    # One-turn QA for final answer summarization
     def _call(self, message: str) -> str:
-        data = {"message": message, **self.settings}
-        return self.client.predict(**data, api_name="/chat")
+        return self.client.predict(message=message, chat_history=[], api_name="/user")[0]
 
-    # Single prompt call to /chat
-    def _generate(self, message: str, virtual_history: list[str] = None, **overrides):
-        parts = [f"Hệ thống: {self.settings['system_message']}"]
-        if virtual_history: # Cache from historical resp (STM)
-            parts.extend(virtual_history)
-        parts.append(f"Người dùng: {message}")
-        full_prompt = "\n".join(parts)
-        # JSON body sending over
-        data = {"message": full_prompt, **self.settings, **overrides}
-        return self.client.predict(**data, api_name="/chat")
- 
-    
-    # Build up task (looping 5 times)
+    # Reasoning with chat history
+    def _generate(self, message: str) -> str:
+        result, new_history = self.client.predict(
+            message=message,
+            chat_history=self.chat_history,
+            api_name="/user"
+        )
+        self.chat_history.append((message, result))
+        return result
+
+    # Build-up logic (5 rounds recursive)
     async def _build_up(self, rounds: int = 5):
         schema = db_schema()
         schema_txt = "\n".join(f"{t}({', '.join(c)})" for t, c in schema.items())
-        # Prompt engineering and STM caching here
-        history = []
+
         prompt = (
             "Dưới đây là cấu trúc database hệ thống doanh số:\n\n"
             f"{schema_txt}\n\n"
             "Hãy mô tả ngắn gọn bằng tiếng Việt về chức năng của từng bảng, "
             "cách liên kết giữa chúng và các loại truy vấn thường gặp."
         )
-        reply = await asyncio.to_thread(self._generate, message=prompt, virtual_history=history)
-        history.append(f"Người dùng: {prompt}"); history.append(f"AI: {reply}") # STM save-up
+        reply = await asyncio.to_thread(self._generate, prompt)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [{"summary": reply}], reply)
         log.info("[Qwen - Build-up 0] Đã lưu tổng quan schema")
-        # Recursive iteration
+
         for i in range(1, rounds + 1):
             log.info(f"[Qwen - Build-up {i}] Reasoning round {i}...")
             followup = (
@@ -67,60 +57,59 @@ class QwenBot:
                 "ngành hàng, sản phẩm. Viết ra các câu hỏi mới bằng tiếng Việt, "
                 "sau đó tạo SQL tương ứng để chuẩn bị truy vấn (dù không cần kết quả ngay)."
             )
-            follow_reply = await asyncio.to_thread(self._generate, message=followup, virtual_history=history)
-            history.append(f"Người dùng: {prompt}"); history.append(f"AI: {reply}") # STM save-up
-            # Save CoT reasoning to LTM
-            questions = re.findall(r"Câu hỏi: (.+?)\n", follow_reply)
-            queries = re.findall(r"SELECT .*?;", follow_reply, flags=re.I | re.S)
+            follow_reply = await asyncio.to_thread(self._generate, followup)
             memory.add_ltm_entry(
                 f"__BUILDUP_ROUND_{i}__", "", [{"thoughts": follow_reply}], follow_reply
             )
-            # Index each QA-SQL pair
+
+            questions = re.findall(r"Câu hỏi: (.+?)\n", follow_reply)
+            queries = re.findall(r"SELECT .*?;", follow_reply, flags=re.I | re.S)
             for q, sql in zip(questions, queries):
                 memory.add_ltm_entry(q, sql, [], "Chưa có kết quả – chỉ ghi nhận SQL")
                 log.info(f"[Qwen - Build-up {i}] Saved question → SQL: {q[:40]}...")
-        log.info("[Qwen - Build-up] ✅ Đã hoàn tất %d vòng suy luận sâu", rounds)
 
-    # ---------- phase 1: generate SQL candidates ----------
+        log.info("[Qwen - Build-up] ✅ Hoàn tất {rounds} vòng suy luận")
+
+    # Phase 1: generate SQL thoughts
     async def generate_sql_thoughts(self, question: str):
         prompt = (
             f"Dựa trên lược đồ và kiến thức đã lưu, tạo TỐI ĐA 6 câu truy vấn SQL "
             f"để trả lời: {question}"
         )
-        raw, _ = await asyncio.to_thread(self._generate, [], user_message=prompt)
-        sqls = re.findall(r"SELECT .*?;", raw, flags=re.I|re.S)
-        return raw, [s.replace("\n"," ").strip() for s in sqls]
+        raw = await asyncio.to_thread(self._generate, prompt)
+        sqls = re.findall(r"SELECT .*?;", raw, flags=re.I | re.S)
+        return raw, [s.replace("\n", " ").strip() for s in sqls]
 
-    # ---------- phase 2: craft natural-language answer ----------
+    # Phase 2: generate concise answer
     async def generate_answer(self, question: str, data: list[dict], thoughts: str) -> str:
-        preview = str(data[:40])  # Avoid full large table, trim to 10 rows
-        prompt = (f"Câu hỏi gốc: {question}\nKết quả truy vấn (mẫu): {preview}\n"
-                  f"Hãy trả lời ngắn gọn, chính xác bằng tiếng Việt.")
-        ans = await asyncio.to_thread(self._call, prompt)
-        return ans
+        preview = str(data[:10])
+        prompt = (
+            f"Câu hỏi gốc: {question}\nKết quả truy vấn (mẫu): {preview}\n"
+            f"Hãy trả lời ngắn gọn, chính xác bằng tiếng Việt."
+        )
+        return await asyncio.to_thread(self._call, prompt)
 
-    # ---- phase 3: execution phase with fallback and memo -------
+    # Phase 3: refine + caching
     async def refine_until_valid(self, question: str, exec_fn, rerank_fn, max_loops=3):
-        # 1) STM?
         if stm := memory.get_stm(question):
             log.info("[Qwen - STM] Trả kết quả nhanh")
             return stm["sql"], stm["rows"], stm["answer"]
-        # 2) LTM?
+
         ltms = memory.retrieve_ltm(question, top_k=1)
         if ltms:
             e = ltms[0]
             memory.add_stm(question, e)
             log.info("[Qwen - LTM] Trả kết quả từ LTM ", {e["sql"]})
             return e["sql"], e["rows"], e["answer"]
-        # 3) Fallback loop
-        for attempt in range(1, max_loops+1):
+
+        for attempt in range(1, max_loops + 1):
             thoughts, cands = await self.generate_sql_thoughts(question)
             best = rerank_fn(question, cands)
             try:
                 rows = exec_fn(best)
                 if rows:
                     ans = await self.generate_answer(question, rows, thoughts)
-                    resp = {"sql":best, "rows":rows, "answer":ans}
+                    resp = {"sql": best, "rows": rows, "answer": ans}
                     memory.add_stm(question, resp)
                     memory.add_ltm_entry(question, best, rows, ans)
                     return best, rows, ans
