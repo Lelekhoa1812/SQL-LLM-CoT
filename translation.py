@@ -1,5 +1,4 @@
 # translation.py
-# translation.py
 import os, logging, json, re, asyncio
 from google import genai   
 from llm_ut import retry_with_backoff
@@ -11,7 +10,7 @@ log = logging.getLogger("translation")
 G_API_KEY = os.getenv("GEMINI_FLASH_API_KEY")
 if not G_API_KEY:
     raise RuntimeError("⚠️  GEMINI_FLASH_API_KEY env-var is missing")
-llm_client = genai.Client(G_API_KEY)
+llm_client = llm_client = genai.configure(api_key=G_API_KEY)
 
 # ------- helpers ------------------------------------------------------------
 MODEL = "gemini-2.5-flash-preview-04-17"
