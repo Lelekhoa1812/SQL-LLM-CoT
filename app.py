@@ -4,7 +4,6 @@ import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from bot import QwenBot
-from sql import SQLReranker
 from utils import execute_sql
 
 log = logging.getLogger("cpg-chatbot")
@@ -14,7 +13,6 @@ log.info("🚀 Root app startup...")
 # Services
 app  = FastAPI()
 bot  = QwenBot()
-rank = SQLReranker()
 
 class Query(BaseModel):
     question: str
@@ -24,7 +22,7 @@ async def query(req: Query):
     log.info(f"[App] 📥 Incoming question: {req.question}")
     try:
         sql, rows, answer = await bot.refine_until_valid(
-            req.question, execute_sql, rank.rerank, max_loops=10
+            req.question, max_loops=10
         )
         log.info(f"[App] ✅ SQL: {sql}\nTop-rows: {rows[:1]}\nAnswer: {answer}")
         return {
