@@ -96,7 +96,7 @@ class QwenBot:
         intro = f"Database schema:\n{schema_txt}\n\nSummarise each table and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
-        self.chat_history.append(Content(role="system", parts=[Part(text=f"(schema): {summary}")]))
+        self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
         log.info(f"🧠 Added schema summary to LTM + STM: {summary}")
         # ───── Step 3: Chain-of-thought enrichment ─────
         for i in range(1, rounds + 1):
@@ -179,7 +179,7 @@ class QwenBot:
                 log.warning("Vanna failed: %s", e)
             # (b) Brain-storm with Qwen (and optionally feed previous error)
             if last_error:
-                self.chat_history.append(Content(role="system", parts=[Part(text=f"(error): {last_error}")]))
+                self.chat_history.append(Content(role="model", parts=[Part(text=f"(error): {last_error}")]))
             cand_sqls += await self._brainstorm_sqls(question_en)
             # Remove dupes while preserving order
             seen, uniq = set(), []
