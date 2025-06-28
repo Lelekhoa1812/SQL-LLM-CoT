@@ -83,7 +83,7 @@ class QwenBot:
             q, sql, ans = doc["question"], doc["sql"], doc.get("answer", "")
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": ans})
             self.chat_history.append(Content(role="user", parts=[Part(text=f"(memory) {q}")]))
-            self.chat_history.append(Content(role="assistant", parts=[Part(text=ans.text)]))
+            self.chat_history.append(Content(role="assistant", parts=[Part(text=ans)]))
         log.info("✅ Loaded %d memory entries into STM and chat_history", len(prior_memories))
         # ───── Step 2: Describe current schema using Qwen ─────
         schema = memory.db_schema() if hasattr(memory, 'db_schema') else {}  # fallback
@@ -92,7 +92,7 @@ class QwenBot:
         summary = await asyncio.to_thread(self._llm, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
         self.chat_history.append(Content(role="assistant", parts=[Part(text=f"(schema summary) {summary}")]))
-        log.info("🧠 Added schema summary to LTM + STM")
+        log.info(f"🧠 Added schema summary to LTM + STM: {summary}")
         # ───── Step 3: Chain-of-thought enrichment ─────
         for i in range(1, rounds + 1):
             log.info(f"[ColdStart-Round {i}] Generating CoT questions…")
@@ -123,7 +123,7 @@ class QwenBot:
                     memory.add_stm(q, answer_pack)
                     memory.add_ltm_entry(q, best_sql, rows, rationale)
                     self.chat_history.append(Content(role="user", parts=[Part(text=q.text)]))
-                    self.chat_history.append(Content(role="assistant", parts=[Part(text=rationale.text)]))
+                    self.chat_history.append(Content(role="assistant", parts=[Part(text=rationale)]))
                     log.info(f"✅ [COT-{i}] Stored: {q[:40]}...")
                 except Exception as e:
                     log.warning(f"❌ [COT-{i}] Failed for Q: {q[:30]} — {e}")
