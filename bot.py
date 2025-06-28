@@ -81,7 +81,7 @@ class QwenBot:
         - Generate synthetic QA pairs using CoT + Vanna
         - Run SQL, reason, and save back into memory
         """
-        memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
+        # memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
         log.info(f"[Cold Start] started!")
         # ───── Step 1: Load prior memory into STM & chat_history ─────
         prior_memories = memory.retrieve_ltm("", top_k=50)
@@ -92,6 +92,7 @@ class QwenBot:
         log.info("✅ Loaded %d memory entries into STM and chat_history", len(prior_memories))
         # ───── Step 2: Describe current schema using Qwen ─────
         schema = memory.db_schema() if hasattr(memory, 'db_schema') else {}  # fallback
+        log.info(f"__SCHEMA_RAW__\n{schema}")
         schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
         intro = f"Database schema:\n{schema_txt}\n\nSummarise each table and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
