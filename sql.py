@@ -45,6 +45,20 @@ class GeminiVanna(VannaBase):
         except Exception:
             score = 0.0
         return max(0.0, min(score, 1.0))
+    
+    # Minimal viable set of dummy implementations to satisfy ABC
+    def add_ddl(self, *args, **kwargs): pass
+    def add_documentation(self, *args, **kwargs): pass
+    def add_question_sql(self, *args, **kwargs): pass
+    def get_related_ddl(self, *args, **kwargs): return []
+    def get_related_documentation(self, *args, **kwargs): return []
+    def get_similar_question_sql(self, *args, **kwargs): return []
+    def get_training_data(self, *args, **kwargs): return []
+    def remove_training_data(self, *args, **kwargs): return False
+    def system_message(self, message: str): return {"role": "system", "content": message}
+    def user_message(self, message: str): return {"role": "user", "content": message}
+    def assistant_message(self, message: str): return {"role": "assistant", "content": message}
+    def generate_embedding(self, data: str, **kwargs): return [0.0] * 384  # dummy vector
 
 # **Strongly preferable**
 if LLM_BACKEND == "openai":
