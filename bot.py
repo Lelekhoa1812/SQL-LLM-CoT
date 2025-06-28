@@ -5,6 +5,7 @@ from utils import db_schema, execute_sql
 from sql   import SQLReranker
 import memory
 import translation as tr
+from llm_ut import retry_with_backoff
 
 log = logging.getLogger("qwen-bot")
 log.info("🚀 Starting Qwen bot...")
@@ -29,11 +30,13 @@ class QwenBot:
         asyncio.run(self._build_up())
     
     # ---------- low-level wrappers ----------------------------------------
+    @retry_with_backoff(retries=4, delay=1.5) # Retry if error persist
     def _llm_no_mem(self, prompt_en: str) -> str:
         """One-off call without history (used for final summaries)."""
         reply, _ = self.client.predict(message=prompt_en, chat_history=[], api_name=API_NAME)
         return reply
     
+    @retry_with_backoff(retries=4, delay=1.5) # Retry if error persist
     def _llm(self, prompt_en: str) -> str:
         """LLM call that keeps self.chat_history (STM)."""
         reply, hist = self.client.predict(

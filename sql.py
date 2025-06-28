@@ -3,6 +3,7 @@ import os, logging, re
 import numpy as np, pandas as pd
 import vanna as vn
 from google import genai                           
+from llm_ut import retry_with_backoff
 
 log = logging.getLogger("sql-vanna")
 log.info("🚀 Bootstrapping Vanna…")
@@ -17,13 +18,14 @@ GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"
 ## **WRAPPER**
 from vanna.base import VannaBase
 class GeminiVanna(VannaBase):
+    @retry_with_backoff(retries=4, delay=1.5) # Retry if error persist
     def complete_prompt(self, prompt: str, **kwargs) -> str:
         try:
             model = genai.GenerativeModel(GEMINI_MODEL)
             resp = model.generate_content(prompt)
             return resp.text.strip()  # No markdown/code fences needed
         except Exception as e:
-            log.warning(f"Gemini API call failed: {e}")
+            log.warning(f"[Gemini] Gemini API call failed: {e}")
 
 # **Strongly preferable**
 if LLM_BACKEND == "openai":
@@ -32,11 +34,12 @@ if LLM_BACKEND == "openai":
 elif LLM_BACKEND == "cohere":
     from vanna.cohere import CohereVanna as VannaLLM
     llm = VannaLLM(api_key=os.getenv("COHERE_API_KEY"))
+
 # **Usable but less effective wrapper**
 elif LLM_BACKEND == "gemini":
     llm = GeminiVanna()
 else:
-    log.error("NO GenAI core implemented")
+    log.error("[SQL] NO GenAI core implemented")
     class CustomVanna(VannaBase):
         def complete_prompt(self, prompt, **kwargs):
             """

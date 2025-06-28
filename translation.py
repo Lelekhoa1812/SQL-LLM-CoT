@@ -1,7 +1,8 @@
 # translation.py
 # translation.py
 import os, logging, json, re, asyncio
-from google import genai                           
+from google import genai   
+from llm_ut import retry_with_backoff
 
 log = logging.getLogger("translation-gemini")
 log.info("🚀 Translator module Gemini boost up...")
@@ -23,6 +24,7 @@ def _clean_md(text: str) -> str:
             return m[0].strip()
     return text.strip()
 
+@retry_with_backoff(retries=4, delay=1.5) # Retry if error persist
 def _gemini(prompt: str, temperature: float = .7) -> str:
     rsp = genai.GenerativeModel(_MODEL).generate_content(
         prompt, generation_config={"temperature": temperature}
