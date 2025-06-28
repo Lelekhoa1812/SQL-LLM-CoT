@@ -1,7 +1,7 @@
 # bot.py  ── Qwen (reasoning)  ↔  Gemini-Vanna (SQL RAG)
 import os, re, asyncio, logging
 # from gradio_client import Client
-from utils   import execute_sql
+from utils   import execute_sql, db_schema
 from sql     import run_and_score, vanna # vanna = GeminiVanna instance
 import translation as tr
 import memory
@@ -81,7 +81,7 @@ class QwenBot:
         - Generate synthetic QA pairs using CoT + Vanna
         - Run SQL, reason, and save back into memory
         """
-        # memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
+        memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
         log.info(f"[Cold Start] started!")
         # ───── Step 1: Load prior memory into STM & chat_history ─────
         prior_memories = memory.retrieve_ltm("", top_k=50)
@@ -91,9 +91,9 @@ class QwenBot:
             self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer) {ans}")]))
         log.info("✅ Loaded %d memory entries into STM and chat_history", len(prior_memories))
         # ───── Step 2: Describe current schema using Qwen ─────
-        schema = memory.db_schema() if hasattr(memory, 'db_schema') else {}  # fallback
-        log.info(f"__SCHEMA_RAW__\n{schema}")
+        schema = db_schema()
         schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
+        log.info(f"__SCHEMA_RAW__\n{schema_txt}")
         intro = f"Database schema:\n{schema_txt}\n\nSummarise each table and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
