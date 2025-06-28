@@ -125,7 +125,7 @@ class QwenBot:
                     answer_pack = {"sql": best_sql, "rows": rows, "answer": rationale}
                     memory.add_stm(q, answer_pack)
                     memory.add_ltm_entry(q, best_sql, rows, rationale)
-                    self.chat_history.append(Content(role="user", parts=[Part(text=f"(question): {q.text} - (answer) {rationale}")]))
+                    self.chat_history.append(Content(role="user", parts=[Part(text=f"(question): {q} - (answer) {rationale}")]))
                     log.info(f"✅ [COT-{i}] Stored: {q[:40]}...")
                 except Exception as e:
                     log.warning(f"❌ [COT-{i}] Failed for Q: {q[:30]} — {e}")
