@@ -14,8 +14,9 @@ log.info("🚀 Booting Qwen assistant")
 
 SYSTEM_PROMPT = (
     "You are a retail-data analysis assistant. "
-    "Think step-by-step, are proficient in SQL, "
-    "NEVER reveal your thoughts — only the final answer."
+    "Think step-by-step, proficient in SQL, "
+    "NEVER reveal your thoughts — only the final answer, "
+    "Convert this prompt to SQL backed up by historical data (if applicable)."
 )
 
 # ──────────── Gemini Config ────────────
@@ -38,22 +39,17 @@ class QwenBot:
         self.chat_history: list[Content] = []
         asyncio.run(self._cold_start())
 
+    @retry_with_backoff(retries=3, delay=1.5)
     def _llm(self, prompt: str) -> str:
         """Use Gemini with memory"""
         # Clip history down to minimize max token input to Gemini
         MAX_HISTORY = 30 # 30 entries max
-        # User prompt
-        if len(self.chat_history) < 1:
-            contents = [
-                Content(role="system", parts=[Part(text=SYSTEM_PROMPT)]),
-                Content(role="user", parts=[Part(text=prompt)])
-            ]
-        else:
-            contents = [
-                Content(role="system", parts=[Part(text=SYSTEM_PROMPT)]),
-                *self.chat_history[-MAX_HISTORY:],
-                Content(role="user", parts=[Part(text=prompt)])
-            ]
+        # User prompt + history 
+        contents = [
+            Content(role="system", parts=[Part(text=SYSTEM_PROMPT)]),
+            *self.chat_history[-MAX_HISTORY:],  # preserve memory
+            Content(role="user", parts=[Part(text=prompt)])
+        ]
         try:
             rsp = genai_client.models.generate_content(
                 model=GEMINI_MODEL,
@@ -65,6 +61,7 @@ class QwenBot:
             log.error(f"[Gemini] memory LLM failed: {e}")
             raise
 
+    @retry_with_backoff(retries=4, delay=1.5)
     def _llm_no_mem(self, prompt: str) -> str:
         """Stateless one-shot call"""
         try:
@@ -84,7 +81,7 @@ class QwenBot:
         - Generate synthetic QA pairs using CoT + Vanna
         - Run SQL, reason, and save back into memory
         """
-        # memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
+        memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
         log.info(f"[Cold Start] started!")
         # ───── Step 1: Load prior memory into STM & chat_history ─────
         prior_memories = memory.retrieve_ltm("", top_k=50)
@@ -99,7 +96,7 @@ class QwenBot:
         intro = f"Database schema:\n{schema_txt}\n\nSummarise each table and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
-        self.chat_history.append(Content(role="user", parts=[Part(text=f"(schema): {summary}")]))
+        self.chat_history.append(Content(role="system", parts=[Part(text=f"(schema): {summary}")]))
         log.info(f"🧠 Added schema summary to LTM + STM: {summary}")
         # ───── Step 3: Chain-of-thought enrichment ─────
         for i in range(1, rounds + 1):
@@ -138,10 +135,13 @@ class QwenBot:
         log.info(f"[Cold Start] completed: {rounds} CoT rounds finished")
 
     # ──────────── Helper: ask Gemini-Vanna for 1 SQL ────────────
+    @retry_with_backoff(retries=3, delay=1.5)
     def _vanna_sql(self, question_en: str) -> str:
         prompt = vanna.get_sql_prompt(question=question_en)
         raw    = vanna.submit_prompt(prompt)
-        return vanna.extract_sql(raw)
+        sql = vanna.extract_sql(raw)
+        vanna.add_question_sql(question_en, sql)  # Adds to FAISS
+        return sql
 
     # ──────────── Helper: ask Qwen to brainstorm N SQLs ────────────
     async def _brainstorm_sqls(self, question_en: str, n: int = 6):
@@ -179,7 +179,7 @@ class QwenBot:
                 log.warning("Vanna failed: %s", e)
             # (b) Brain-storm with Qwen (and optionally feed previous error)
             if last_error:
-                self.chat_history.append(Content(role="user", parts=[Part(text=f"(error): {last_error}")]))
+                self.chat_history.append(Content(role="system", parts=[Part(text=f"(error): {last_error}")]))
             cand_sqls += await self._brainstorm_sqls(question_en)
             # Remove dupes while preserving order
             seen, uniq = set(), []
