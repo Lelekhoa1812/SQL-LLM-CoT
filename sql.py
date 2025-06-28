@@ -4,15 +4,9 @@ import numpy as np, pandas as pd
 import vanna as vn
 from vanna.base import VannaBase
 import memory
-import hashlib
+import hashlib, faiss
 from google import genai                           
 from llm_ut import retry_with_backoff
-from base.base import (
-    add_ddl, add_documentation, add_question_sql,
-    extract_sql, get_sql_prompt,
-    get_related_ddl, get_related_documentation, get_similar_question_sql, get_training_data,
-    remove_training_data,
-)
 log = logging.getLogger("sql-vanna")
 log.info("🚀 Bootstrapping Vanna…")
 
@@ -25,10 +19,10 @@ GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"
 
 ## **WRAPPER**
 class GeminiVanna(VannaBase):
-    def __init__(self, **kwargs):
+    def __init__(self, dialect="mysql"):
+        super().__init__(dialect=dialect)
+        genai.configure(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
         self.model = genai.GenerativeModel(GEMINI_MODEL)
-        self.index = faiss.IndexFlatL2(768)  # Must match embedding dim
-        self.train_data = []                 # [(question, sql, embedding)]
 
     @retry_with_backoff(retries=4, delay=1.5)
     def complete_prompt(self, prompt: str, **kwargs) -> str:
@@ -48,27 +42,6 @@ class GeminiVanna(VannaBase):
             return response.text.strip()
         except Exception as e:
             raise RuntimeError(f"[GeminiVanna] Prompt error: {e}")
-    
-    def extract_sql(self, llm_response: str) -> str:
-        return extract_sql(llm_response)  # Use your logic
-
-    def get_sql_prompt(self, **kwargs):
-        return get_sql_prompt(**kwargs)
-    
-    # No-op or default returns for abstract methods if don't need yet:
-    def add_ddl(self, *args, **kwargs): return add_ddl(self, *args, **kwargs)
-    def add_documentation(self, *args, **kwargs): return add_documentation(self, *args, **kwargs)
-    def add_question_sql(self, *args, **kwargs): return add_question_sql(self, *args, **kwargs)
-    def assistant_message(self, message: str, **kwargs): return {"role": "assistant", "content": message}
-    def generate_embedding(self, data: str, **kwargs): return [0.0] * 768  # Override if needed
-    def get_related_ddl(self, question: str, **kwargs): return get_related_ddl(self, question, **kwargs)
-    def get_related_documentation(self, question: str, **kwargs): return get_related_documentation(self, question, **kwargs)
-    def get_similar_question_sql(self, question: str, **kwargs): return get_similar_question_sql(self, question, **kwargs)
-    def get_training_data(self, **kwargs): return get_training_data(self, **kwargs)
-    def remove_training_data(self, id: str, **kwargs): return remove_training_data(self, id, **kwargs)
-    def system_message(self, message: str): return {"role": "system", "content": message}
-    def user_message(self, message: str): return {"role": "user", "content": message}
-    
 
 
 # **Strongly preferable**

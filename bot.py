@@ -2,7 +2,8 @@
 from gradio_client import Client
 import asyncio, logging, re, os
 from utils import db_schema, execute_sql
-from sql   import SQLReranker
+import faiss   
+from sql import run_and_score, vanna                    
 import memory
 import translation as tr
 from llm_ut import retry_with_backoff
@@ -25,7 +26,8 @@ class QwenBot:
         token = os.getenv("HF_TOKEN")
         self.client = Client(HF_SPACE, hf_token=token or None)
         self.chat_history: list[tuple[str, str]] = []  # STM-style memory
-        self.reranker = SQLReranker()
+        self.reranker = SQLReranker
+        self.vanna    = vanna 
         self.system_prompt = SYSTEM_PROMPT
         asyncio.run(self._build_up())
     
