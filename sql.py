@@ -1,4 +1,4 @@
-# sql.py  ── use Vanna instead of Jina
+# sql.py
 import os, logging, re
 import numpy as np, pandas as pd
 import vanna as vn
@@ -21,6 +21,8 @@ class GeminiVanna(VannaBase):
     def __init__(self):
         super().__init__() 
         self.client = genai.Client(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
+        self.dialect = "mysql"
+        self.get_table_info = lambda: utils.db_schema()
         self.model = MODEL
 
     @retry_with_backoff(retries=4, delay=1.5)
@@ -92,11 +94,7 @@ from sqlalchemy import create_engine, text
 import utils                              
 
 ENGINE = utils.ENGINE
-vanna = vn.Vanna(
-    llm=llm,
-    dialect="mysql",
-    get_table_info=lambda: utils.db_schema()
-)
+vanna = llm
 
 # ────────────────────────────────────────────────
 # 3️.  A very small “rerank/verify-and-run” helper
