@@ -3,10 +3,9 @@ import os, logging, re
 import numpy as np, pandas as pd
 import vanna as vn
 from vanna.base import VannaBase
-import memory
-import hashlib, faiss
 from google import genai                           
 from llm_ut import retry_with_backoff
+
 log = logging.getLogger("sql-vanna")
 log.info("🚀 Bootstrapping Vanna…")
 
@@ -15,23 +14,16 @@ log.info("🚀 Bootstrapping Vanna…")
 # ────────────────────────────────────────────────
 LLM_BACKEND = os.getenv("VN_BACKEND", "gemini").lower() # gemini prefix as default
 GEMINI_KEY = os.getenv("GEMINI_FLASH_API_KEY")
-GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"
+MODEL = "gemini-2.5-flash-preview-04-17"
 
 ## **WRAPPER**
 class GeminiVanna(VannaBase):
     def __init__(self, dialect="mysql"):
         super().__init__(dialect=dialect)
         genai.configure(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
-        self.model = genai.GenerativeModel(GEMINI_MODEL)
+        self.model = genai.GenerativeModel(MODEL)
 
     @retry_with_backoff(retries=4, delay=1.5)
-    def complete_prompt(self, prompt: str, **kwargs) -> str:
-        try:
-            response = self.model.generate_content(prompt)
-            return response.text.strip()
-        except Exception as e:
-            raise RuntimeError(f"[GeminiVanna] Gemini failed: {e}")
-        
     def submit_prompt(self, prompt, **kwargs) -> str:
         try:
             if isinstance(prompt, list):
@@ -43,6 +35,16 @@ class GeminiVanna(VannaBase):
         except Exception as e:
             raise RuntimeError(f"[GeminiVanna] Prompt error: {e}")
 
+    # helper used by vanna-core for scoring:
+    def score_sql(self, question: str, sql: str) -> float:
+        p = (f"Score from 0-1 how well the SQL answers the question.\n"
+             f"### Question\n{question}\n### SQL\n{sql}\n"
+             "Respond with a single number.")
+        try:
+            score = float(self.submit_prompt(p).split()[0])
+        except Exception:
+            score = 0.0
+        return max(0.0, min(score, 1.0))
 
 # **Strongly preferable**
 if LLM_BACKEND == "openai":
