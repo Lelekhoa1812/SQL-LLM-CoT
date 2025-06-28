@@ -20,7 +20,7 @@ MODEL = "gemini-2.5-flash-preview-04-17"
 class GeminiVanna(VannaBase):
     def __init__(self):
         super().__init__() 
-        genai.configure(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
+        genai.Client(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
         self.model = genai.GenerativeModel(MODEL)
 
     @retry_with_backoff(retries=4, delay=1.5)
