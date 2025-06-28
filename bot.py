@@ -46,7 +46,7 @@ class QwenBot:
         MAX_HISTORY = 30 # 30 entries max
         # User prompt + history 
         contents = [
-            Content(role="system", parts=[Part(text=SYSTEM_PROMPT)]),
+            Content(role="model", parts=[Part(text=SYSTEM_PROMPT)]),
             *self.chat_history[-MAX_HISTORY:],  # preserve memory
             Content(role="user", parts=[Part(text=prompt)])
         ]
@@ -55,7 +55,7 @@ class QwenBot:
                 model=GEMINI_MODEL,
                 contents=contents
             )
-            self.chat_history.append(Content(role="user", parts=[Part(text=f"(question): {prompt} - (answer) {rsp.text}")]))
+            self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {prompt} - (answer) {rsp.text}")]))
             return _clean_md(rsp.text)
         except Exception as e:
             log.error(f"[Gemini] memory LLM failed: {e}")
@@ -88,7 +88,7 @@ class QwenBot:
         for doc in prior_memories:
             q, sql, ans = doc["question"], doc["sql"], doc.get("answer", "")
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": ans})
-            self.chat_history.append(Content(role="user", parts=[Part(text=f"(question): {q} - (answer) {ans}")]))
+            self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer) {ans}")]))
         log.info("✅ Loaded %d memory entries into STM and chat_history", len(prior_memories))
         # ───── Step 2: Describe current schema using Qwen ─────
         schema = memory.db_schema() if hasattr(memory, 'db_schema') else {}  # fallback
@@ -127,7 +127,7 @@ class QwenBot:
                     answer_pack = {"sql": best_sql, "rows": rows, "answer": rationale}
                     memory.add_stm(q, answer_pack)
                     memory.add_ltm_entry(q, best_sql, rows, rationale)
-                    self.chat_history.append(Content(role="user", parts=[Part(text=f"(question): {q} - (answer) {rationale}")]))
+                    self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer) {rationale}")]))
                     log.info(f"✅ [COT-{i}] Stored: {q[:40]}...")
                 except Exception as e:
                     log.warning(f"❌ [COT-{i}] Failed for Q: {q[:30]} — {e}")
