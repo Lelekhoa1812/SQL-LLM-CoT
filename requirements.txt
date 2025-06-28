@@ -4,17 +4,21 @@ uvicorn[standard]
 gunicorn
 transformers
 google-genai
-vanna
 python-dotenv   
 python-multipart
 sentence-transformers
 torch
-sqlalchemy
-pymysql
-pandas
 accelerate
 einops
 cachetools
 pymongo
 gradio_client       # Server can't load Qwen3
-# jina              # Local usage only
+
+# SQLs
+vanna
+sqlalchemy
+pymysql
+pandas
+plotly
+python-abc
+tenacity
