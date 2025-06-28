@@ -6,6 +6,7 @@ from sql     import run_and_score, vanna # vanna = GeminiVanna instance
 import translation as tr
 import memory
 from google import genai   
+from google.genai.types import Content, Part
 from llm_ut  import retry_with_backoff
 
 log = logging.getLogger("qwen-bot")
@@ -34,7 +35,7 @@ def _clean_md(text: str) -> str:
 
 class QwenBot:
     def __init__(self):
-        self.chat_history: list[dict] = []  # Gemini expects message dicts
+        self.chat_history: list[Content] = []
         asyncio.run(self._cold_start())
 
     def _llm(self, prompt: str) -> str:
@@ -44,13 +45,13 @@ class QwenBot:
         if len(self.chat_history) > MAX_HISTORY:
             self.chat_history = self.chat_history[-MAX_HISTORY:]
         # User prompt
-        self.chat_history.append({"role": "user", "content": prompt})
+        self.chat_history.append(Content(role="user", parts=[Part(text=prompt)]))
         try:
             rsp = genai_client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=self.chat_history
             )
-            self.chat_history.append({"role": "assistant", "content": rsp.text})
+            self.chat_history.append(Content(role="assistant", parts=[Part(text=rsp.text)]))
             return _clean_md(rsp.text)
         except Exception as e:
             log.error(f"[Gemini] memory LLM failed: {e}")
@@ -61,7 +62,7 @@ class QwenBot:
         try:
             rsp = genai_client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=[{"role": "user", "content": prompt}]
+                contents=[Content(role="user", parts=[Part(text=prompt)])]
             )
             return _clean_md(rsp.text)
         except Exception as e:
@@ -81,8 +82,8 @@ class QwenBot:
         for doc in prior_memories:
             q, sql, ans = doc["question"], doc["sql"], doc.get("answer", "")
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": ans})
-            self.chat_history.append({"role": "user", "content": f"(memory) {q}"})
-            self.chat_history.append({"role": "assistant", "content": ans})
+            self.chat_history.append(Content(role="user", parts=[Part(text=f"(memory) {q}")]))
+            self.chat_history.append(Content(role="assistant", parts=[Part(text=ans.text)]))
         log.info("✅ Loaded %d memory entries into STM and chat_history", len(prior_memories))
         # ───── Step 2: Describe current schema using Qwen ─────
         schema = memory.db_schema() if hasattr(memory, 'db_schema') else {}  # fallback
@@ -90,7 +91,7 @@ class QwenBot:
         intro = f"Database schema:\n{schema_txt}\n\nSummarise each table and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
-        self.chat_history.append({"role": "assistant", "content": f"(schema summary) {summary}"})
+        self.chat_history.append(Content(role="assistant", parts=[Part(text=f"(schema summary) {summary}")]))
         log.info("🧠 Added schema summary to LTM + STM")
         # ───── Step 3: Chain-of-thought enrichment ─────
         for i in range(1, rounds + 1):
@@ -121,7 +122,8 @@ class QwenBot:
                     answer_pack = {"sql": best_sql, "rows": rows, "answer": rationale}
                     memory.add_stm(q, answer_pack)
                     memory.add_ltm_entry(q, best_sql, rows, rationale)
-                    self.chat_history.append((q, rationale))
+                    self.chat_history.append(Content(role="user", parts=[Part(text=q.text)]))
+                    self.chat_history.append(Content(role="assistant", parts=[Part(text=rationale.text)]))
                     log.info(f"✅ [COT-{i}] Stored: {q[:40]}...")
                 except Exception as e:
                     log.warning(f"❌ [COT-{i}] Failed for Q: {q[:30]} — {e}")
@@ -166,7 +168,7 @@ class QwenBot:
                 log.warning("Vanna failed: %s", e)
             # (b) Brain-storm with Qwen (and optionally feed previous error)
             if last_error:
-                self.chat_history.append((f"The last SQL failed: {last_error}", ""))
+                self.chat_history.append(Content(role="assistant", parts=[Part(text=f"(failed SQL) {last_error}")]))
             cand_sqls += await self._brainstorm_sqls(question_en)
             # Remove dupes while preserving order
             seen, uniq = set(), []
