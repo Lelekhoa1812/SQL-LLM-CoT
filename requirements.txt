@@ -11,8 +11,11 @@ torch
 accelerate
 einops
 cachetools
-pymongo
 gradio_client       # Server can't load Qwen3
+
+# RAG
+faiss-cpu
+pymongo
 
 # SQLs
 vanna

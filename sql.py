@@ -3,6 +3,8 @@ import os, logging, re
 import numpy as np, pandas as pd
 import vanna as vn
 from vanna.base import VannaBase
+import memory
+import hashlib
 from google import genai                           
 from llm_ut import retry_with_backoff
 from base.base import (
@@ -25,6 +27,8 @@ GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"
 class GeminiVanna(VannaBase):
     def __init__(self, **kwargs):
         self.model = genai.GenerativeModel(GEMINI_MODEL)
+        self.index = faiss.IndexFlatL2(768)  # Must match embedding dim
+        self.train_data = []                 # [(question, sql, embedding)]
 
     @retry_with_backoff(retries=4, delay=1.5)
     def complete_prompt(self, prompt: str, **kwargs) -> str:
@@ -33,12 +37,24 @@ class GeminiVanna(VannaBase):
             return response.text.strip()
         except Exception as e:
             raise RuntimeError(f"[GeminiVanna] Gemini failed: {e}")
+        
+    def submit_prompt(self, prompt, **kwargs) -> str:
+        try:
+            if isinstance(prompt, list):
+                content = "\n".join(m["content"] for m in prompt)
+            else:
+                content = str(prompt)
+            response = self.model.generate_content(content)
+            return response.text.strip()
+        except Exception as e:
+            raise RuntimeError(f"[GeminiVanna] Prompt error: {e}")
     
     def extract_sql(self, llm_response: str) -> str:
         return extract_sql(llm_response)  # Use your logic
 
     def get_sql_prompt(self, **kwargs):
         return get_sql_prompt(**kwargs)
+    
     # No-op or default returns for abstract methods if don't need yet:
     def add_ddl(self, *args, **kwargs): return add_ddl(self, *args, **kwargs)
     def add_documentation(self, *args, **kwargs): return add_documentation(self, *args, **kwargs)
@@ -50,7 +66,6 @@ class GeminiVanna(VannaBase):
     def get_similar_question_sql(self, question: str, **kwargs): return get_similar_question_sql(self, question, **kwargs)
     def get_training_data(self, **kwargs): return get_training_data(self, **kwargs)
     def remove_training_data(self, id: str, **kwargs): return remove_training_data(self, id, **kwargs)
-    def submit_prompt(self, prompt, **kwargs): return self.complete_prompt(prompt if isinstance(prompt, str) else "\n".join(m['content'] for m in prompt))
     def system_message(self, message: str): return {"role": "system", "content": message}
     def user_message(self, message: str): return {"role": "user", "content": message}
     

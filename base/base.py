@@ -1,17 +1,24 @@
 # base/base.py
-import json, os, re, logging
+import json, os, re, logging, hashlib
 import sqlite3
 import traceback
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Union
 from urllib.parse import urlparse
 
-import pandas as pd
+import pandas as pd, numpy as np
 import plotly
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import sqlparse
+
+from sentence_transformers import SentenceTransformer
+EMBED = SentenceTransformer("all-MiniLM-L6-v2")
+
+import utils
+import memory
+
 
 log = logging.getLogger("vanna-utils")
 
@@ -28,6 +35,8 @@ class VannaBase(ABC):
         self.dialect = self.config.get("dialect", "SQL")
         self.language = self.config.get("language", None)
         self.max_tokens = self.config.get("max_tokens", 14000)
+        self.train_data = []
+        self.index = faiss.IndexFlatL2(768)
 
     def log(self, message: str, title: str = "Info"):
         print(f"{title}: {message}")
@@ -327,138 +336,66 @@ class VannaBase(ABC):
         summary = self.submit_prompt(message_log, **kwargs)
 
         return summary
+        
+    # Self-implemented
+    def submit_prompt(self, prompt, **kwargs) -> str:
+        return self.complete_prompt("\n".join(m["content"] for m in prompt) if isinstance(prompt, list) else str(prompt))
 
-    # ----------------- Use Any Embeddings API ----------------- #
-    @abstractmethod
-    def generate_embedding(self, data: str, **kwargs) -> List[float]:
-        pass
+    def generate_embedding(self, data: str, **kwargs) -> list[float]:
+        return EMBED.encode(data).tolist()
 
-    # ----------------- Use Any Database to Store and Retrieve Context ----------------- #
-    @abstractmethod
-    def get_similar_question_sql(self, question: str, **kwargs) -> list:
-        """
-        This method is used to get similar questions and their corresponding SQL statements.
-
-        Args:
-            question (str): The question to get similar questions and their corresponding SQL statements for.
-
-        Returns:
-            list: A list of similar questions and their corresponding SQL statements.
-        """
-        pass
-
-    @abstractmethod
-    def get_related_ddl(self, question: str, **kwargs) -> list:
-        """
-        This method is used to get related DDL statements to a question.
-
-        Args:
-            question (str): The question to get related DDL statements for.
-
-        Returns:
-            list: A list of related DDL statements.
-        """
-        pass
-
-    @abstractmethod
-    def get_related_documentation(self, question: str, **kwargs) -> list:
-        """
-        This method is used to get related documentation to a question.
-
-        Args:
-            question (str): The question to get related documentation for.
-
-        Returns:
-            list: A list of related documentation.
-        """
-        pass
-
-    @abstractmethod
     def add_question_sql(self, question: str, sql: str, **kwargs) -> str:
-        """
-        This method is used to add a question and its corresponding SQL query to the training data.
+        emb = np.array(self.generate_embedding(question), dtype=np.float32)
+        self.train_data.append((question, sql, emb))
+        self.index.add(np.expand_dims(emb, axis=0))
+        memory.save({"type": "qa", "q": question, "sql": sql})
+        return hashlib.md5(question.encode()).hexdigest()
 
-        Args:
-            question (str): The question to add.
-            sql (str): The SQL query to add.
+    def get_similar_question_sql(self, question: str, **kwargs) -> list:
+        emb = np.array(self.generate_embedding(question), dtype=np.float32).reshape(1, -1)
+        if self.index.ntotal == 0:
+            return []
+        _, I = self.index.search(emb, k=5)
+        return [{"question": self.train_data[i][0], "sql": self.train_data[i][1]} for i in I[0]]
 
-        Returns:
-            str: The ID of the training data that was added.
-        """
-        pass
-
-    @abstractmethod
     def add_ddl(self, ddl: str, **kwargs) -> str:
-        """
-        This method is used to add a DDL statement to the training data.
+        memory.save({"type": "ddl", "ddl": ddl})
+        return hashlib.md5(ddl.encode()).hexdigest()
 
-        Args:
-            ddl (str): The DDL statement to add.
-
-        Returns:
-            str: The ID of the training data that was added.
-        """
-        pass
-
-    @abstractmethod
     def add_documentation(self, documentation: str, **kwargs) -> str:
-        """
-        This method is used to add documentation to the training data.
+        memory.save({"type": "doc", "text": documentation})
+        return hashlib.md5(documentation.encode()).hexdigest()
 
-        Args:
-            documentation (str): The documentation to add.
+    def get_related_ddl(self, question: str, **kwargs) -> list:
+        schema = memory.get_by_type("ddl")
+        return [entry["ddl"] for entry in schema if question.lower() in entry["ddl"].lower()]
 
-        Returns:
-            str: The ID of the training data that was added.
-        """
-        pass
+    def get_related_documentation(self, question: str, **kwargs) -> list:
+        docs = memory.get_by_type("doc")
+        return [entry["text"] for entry in docs if question.lower() in entry["text"].lower()]
 
-    @abstractmethod
     def get_training_data(self, **kwargs) -> pd.DataFrame:
-        """
-        Example:
-        ```python
-        vn.get_training_data()
-        ```
+        data = memory.all()
+        return pd.DataFrame(data)
 
-        This method is used to get all the training data from the retrieval layer.
-
-        Returns:
-            pd.DataFrame: The training data.
-        """
-        pass
-
-    @abstractmethod
     def remove_training_data(self, id: str, **kwargs) -> bool:
-        """
-        Example:
-        ```python
-        vn.remove_training_data(id="123-ddl")
-        ```
+        return memory.remove_by_hash(id)
 
-        This method is used to remove training data from the retrieval layer.
+    def extract_sql(self, llm_response: str) -> str:
+        return extract_sql(llm_response)
 
-        Args:
-            id (str): The ID of the training data to remove.
+    def get_sql_prompt(self, **kwargs):
+        return get_sql_prompt(**kwargs)
 
-        Returns:
-            bool: True if the training data was removed, False otherwise.
-        """
-        pass
+    def system_message(self, message: str):
+        return {"role": "system", "content": message}
 
-    # ----------------- Use Any Language Model API ----------------- #
+    def user_message(self, message: str):
+        return {"role": "user", "content": message}
 
-    @abstractmethod
-    def system_message(self, message: str) -> any:
-        pass
+    def assistant_message(self, message: str):
+        return {"role": "assistant", "content": message}
 
-    @abstractmethod
-    def user_message(self, message: str) -> any:
-        pass
-
-    @abstractmethod
-    def assistant_message(self, message: str) -> any:
-        pass
 
     def str_to_approx_token_count(self, string: str) -> int:
         return len(string) / 4
@@ -616,29 +553,6 @@ class VannaBase(ABC):
         )
 
         return message_log
-
-    @abstractmethod
-    def submit_prompt(self, prompt, **kwargs) -> str:
-        """
-        Example:
-        ```python
-        vn.submit_prompt(
-            [
-                vn.system_message("The user will give you SQL and you will try to guess what the business question this query is answering. Return just the question without any additional explanation. Do not reference the table name in the question."),
-                vn.user_message("What are the top 10 customers by sales?"),
-            ]
-        )
-        ```
-
-        This method is used to submit a prompt to the LLM.
-
-        Args:
-            prompt (any): The prompt to submit to the LLM.
-
-        Returns:
-            str: The response from the LLM.
-        """
-        pass
 
     def generate_question(self, sql: str, **kwargs) -> str:
         response = self.submit_prompt(
@@ -839,7 +753,7 @@ class VannaBase(ABC):
             log.error("DependencyError")
 
         if not host:
-            host = os.getenv("HOST")
+            host = os.getenv("PORT")
 
         if not host:
             log.error("ImproperlyConfigured")

@@ -53,3 +53,26 @@ def retrieve_ltm(question: str, top_k: int = 3) -> list[dict]:
         sims.append((score, d))
     sims.sort(key=lambda x: x[0], reverse=True)
     return [d for _, d in sims[:top_k]]
+
+## **Services**
+def save(entry: dict):
+    """
+    Saves a memory entry to MongoDB LTM.
+    Entry must contain a 'type' key, e.g. 'ddl', 'doc', or 'qa'.
+    """
+    if "type" not in entry:
+        raise ValueError("Missing 'type' in memory entry")
+    entry["ts"] = time.time()
+    ltm_coll.insert_one(entry)
+    log.info("[LTM] Saved entry of type `%s`", entry["type"])
+
+
+def get_by_type(mem_type: str) -> list[dict]:
+    return list(ltm_coll.find({"type": mem_type}))
+
+def all() -> list[dict]:
+    return list(ltm_coll.find())
+
+def remove_by_hash(doc_id: str) -> bool:
+    result = ltm_coll.delete_one({"_id": doc_id})
+    return result.deleted_count > 0
