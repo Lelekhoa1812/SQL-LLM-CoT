@@ -18,7 +18,9 @@ gradio_client       # Server can't load Qwen3
 vanna
 sqlalchemy
 pymysql
+db-sqlite3
 pandas
 plotly
 python-abc
 tenacity
+clickhouse-connect
