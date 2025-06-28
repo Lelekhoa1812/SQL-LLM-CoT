@@ -42,13 +42,18 @@ class QwenBot:
         """Use Gemini with memory"""
         # Clip history down to minimize max token input to Gemini
         MAX_HISTORY = 30 # 30 entries max
-        if len(self.chat_history) > MAX_HISTORY:
-            self.chat_history = self.chat_history[-MAX_HISTORY:]
         # User prompt
         if len(self.chat_history) < 1:
-            contents = prompt
+            contents = [
+                Content(role="system", parts=[Part(text=SYSTEM_PROMPT)]),
+                Content(role="user", parts=[Part(text=prompt)])
+            ]
         else:
-            contents = self.chat_history + Content(role="user", parts=[Part(text=prompt)])
+            contents = [
+                Content(role="system", parts=[Part(text=SYSTEM_PROMPT)]),
+                *self.chat_history[-MAX_HISTORY:],
+                Content(role="user", parts=[Part(text=prompt)])
+            ]
         try:
             rsp = genai_client.models.generate_content(
                 model=GEMINI_MODEL,
@@ -134,7 +139,7 @@ class QwenBot:
 
     # ──────────── Helper: ask Gemini-Vanna for 1 SQL ────────────
     def _vanna_sql(self, question_en: str) -> str:
-        prompt = vanna.get_sql_prompt(question_en)
+        prompt = vanna.get_sql_prompt(question=question_en)
         raw    = vanna.submit_prompt(prompt)
         return vanna.extract_sql(raw)
 
@@ -145,7 +150,11 @@ class QwenBot:
             f"\"{question_en}\"\nOnly return the SQL, no explanation."
         )
         raw = await asyncio.to_thread(self._llm, prompt)
-        return re.findall(r"SELECT .*?;", raw, flags=re.I | re.S)
+        sqls = re.findall(r"SELECT .*?;", raw, flags=re.I | re.S)
+        if not sqls:
+            sqls = [raw.strip()] if "select" in raw.lower() else []
+        return sqls
+
 
     # ──────────── The important bit: refine_until_valid ────────────
     async def refine_until_valid(self, question_vi: str, max_loops: int = 5):
