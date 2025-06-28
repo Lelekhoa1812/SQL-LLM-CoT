@@ -114,8 +114,13 @@ class QwenBot:
             log.info(f"CoT-{i}: Generated {len(questions)} Q–SQL candidates")
             for q, raw_sql in zip(questions, sqls):
                 try:
-                    # Rerank (only 1 candidate here)
-                    best_sql, rows = run_and_score(q, [raw_sql])
+                    # Rerank with Vanna (only 1 candidate here)
+                    few_shots = vanna.similar_qa(q)
+                    prompt = vanna.get_sql_prompt(question=q, shots=few_shots)
+                    raw = vanna.submit_prompt(prompt)
+                    sql = vanna.extract_sql(raw)
+                    vanna.add_question_sql(q, sql)
+                    best_sql, rows = run_and_score(q, [sql])
                     if not rows: continue
                     # Use Qwen to reason over output
                     reason_prompt = (
@@ -137,10 +142,11 @@ class QwenBot:
     # ──────────── Helper: ask Gemini-Vanna for 1 SQL ────────────
     @retry_with_backoff(retries=3, delay=1.5)
     def _vanna_sql(self, question_en: str) -> str:
-        prompt = vanna.get_sql_prompt(question=question_en)
+        few_shots = vanna.similar_qa(question_en, k=3)
+        prompt = vanna.get_sql_prompt(question=question_en, shots=few_shots)
         raw    = vanna.submit_prompt(prompt)
-        sql = vanna.extract_sql(raw)
-        vanna.add_question_sql(question_en, sql)  # Adds to FAISS
+        sql    = vanna.extract_sql(raw)
+        vanna.add_question_sql(question_en, sql)
         return sql
 
     # ──────────── Helper: ask Qwen to brainstorm N SQLs ────────────
