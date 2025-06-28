@@ -19,7 +19,7 @@ MODEL = "gemini-2.5-flash-preview-04-17"
 ## **WRAPPER**
 class GeminiVanna(VannaBase):
     def __init__(self):
-        super().__init__(dialect="mysql")
+        super().__init__() 
         genai.configure(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
         self.model = genai.GenerativeModel(MODEL)
 
