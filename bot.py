@@ -157,7 +157,7 @@ class QwenBot:
             except Exception as e:
                 last_error = str(e)
                 log.warning("Attempt %d failed: %s", attempt, last_error)
-
+        # Error
         raise RuntimeError("❌ Could not obtain a valid SQL after many tries.")
 
     # ──────────── Compose short natural-language answer ────────────

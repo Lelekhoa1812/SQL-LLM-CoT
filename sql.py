@@ -20,8 +20,8 @@ MODEL = "gemini-2.5-flash-preview-04-17"
 class GeminiVanna(VannaBase):
     def __init__(self):
         super().__init__() 
-        genai.Client(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
-        self.model = genai.GenerativeModel(MODEL)
+        self.client = genai.Client(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
+        self.model = MODEL
 
     @retry_with_backoff(retries=4, delay=1.5)
     def submit_prompt(self, prompt, **kwargs) -> str:
@@ -30,7 +30,10 @@ class GeminiVanna(VannaBase):
                 content = "\n".join(m["content"] for m in prompt)
             else:
                 content = str(prompt)
-            response = self.model.generate_content(content)
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=content
+            )
             return response.text.strip()
         except Exception as e:
             raise RuntimeError(f"[GeminiVanna] Prompt error: {e}")

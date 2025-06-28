@@ -11,10 +11,10 @@ log = logging.getLogger("translation")
 G_API_KEY = os.getenv("GEMINI_FLASH_API_KEY")
 if not G_API_KEY:
     raise RuntimeError("⚠️  GEMINI_FLASH_API_KEY env-var is missing")
-genai.Client(api_key=G_API_KEY)
+llm_client = genai.Client(G_API_KEY)
 
 # ------- helpers ------------------------------------------------------------
-_MODEL = "gemini-2.5-flash-preview-04-17"
+MODEL = "gemini-2.5-flash-preview-04-17"
 
 def _clean_md(text: str) -> str:
     """Remove ``` fences if model wrapped the answer."""
@@ -26,11 +26,14 @@ def _clean_md(text: str) -> str:
 
 @retry_with_backoff(retries=4, delay=1.5) # Retry if error persist
 def _gemini(prompt: str, temperature: float = .7) -> str:
-    rsp = genai.GenerativeModel(_MODEL).generate_content(
-        prompt, generation_config={"temperature": temperature}
-    )
-    cleaned = _clean_md(rsp.text)
-    return cleaned
+    try:
+        rsp = llm_client.models.generate_content(
+            model=MODEL,
+            contents=prompt)
+        return _clean_md(rsp.text)
+    except Exception as e:
+        log.error(f"[Gemini] translation failure: {e}")
+        raise
 
 # ------- public API ---------------------------------------------------------
 def vie_to_en(vie: str) -> str:
