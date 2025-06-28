@@ -382,10 +382,65 @@ class VannaBase(ABC):
         return memory.remove_by_hash(id)
 
     def extract_sql(self, llm_response: str) -> str:
-        return extract_sql(llm_response)
+        """
+        Extracts SQL from an LLM response using multiple regex patterns.
+        """
+        patterns = [
+            r"\bCREATE\s+TABLE\b.*?\bAS\b.*?;",               # CREATE TABLE AS SELECT
+            r"\bWITH\b .*?;",                                 # WITH clause
+            r"\bSELECT\b .*?;",                               # SELECT statement
+            r"```sql\s*\n(.*?)```",                           # ```sql ... ```
+            r"```(.*?)```",                                   # generic code block
+        ]
+        for pattern in patterns:
+            matches = re.findall(pattern, llm_response, re.DOTALL | re.IGNORECASE)
+            if matches:
+                sql = matches[-1].strip()
+                self.log(f"Extracted SQL:\n{sql}", title="SQL Extraction")
+                return sql
+        # Fallback: return raw string (assume it's SQL)
+        return llm_response.strip()
 
-    def get_sql_prompt(self, **kwargs):
-        return get_sql_prompt(**kwargs)
+
+    def get_sql_prompt(
+        self,
+        initial_prompt: str,
+        question: str,
+        question_sql_list: list,
+        ddl_list: list,
+        doc_list: list,
+        **kwargs,
+    ) -> list:
+        """
+        Build structured prompt messages for LLM using system + user + assistant roles.
+        """
+        if not initial_prompt:
+            initial_prompt = (
+                f"You are a {self.dialect} expert. "
+                "Generate a SQL query to answer the question, using ONLY the provided context below. "
+                "Always return executable code without explanation.\n"
+            )
+        initial_prompt = self.add_ddl_to_prompt(initial_prompt, ddl_list, self.max_tokens)
+        if self.static_documentation:
+            doc_list.append(self.static_documentation)
+        initial_prompt = self.add_documentation_to_prompt(initial_prompt, doc_list, self.max_tokens)
+        initial_prompt += (
+            "===Response Guidelines===\n"
+            "1. Only output SQL without explanation.\n"
+            "2. If information is missing, say it's insufficient.\n"
+            "3. Prefer specific column filtering over SELECT *.\n"
+            "4. Use LIMIT 1000 if user didn't specify it.\n"
+        )
+        message_log = [self.system_message(initial_prompt)]
+        # Add few-shot examples from training memory
+        for item in question_sql_list:
+            if item and "question" in item and "sql" in item:
+                message_log.append(self.user_message(item["question"]))
+                message_log.append(self.assistant_message(item["sql"]))
+        # Add the current question
+        message_log.append(self.user_message(question))
+        return message_log
+
 
     def system_message(self, message: str):
         return {"role": "system", "content": message}
