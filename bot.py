@@ -74,6 +74,11 @@ class QwenBot:
             log.error(f"[Gemini] no-mem LLM failed: {e}")
             raise
 
+    def reset_history(self):
+        self.chat_history = []
+        logging.info("🧼 Cleared chat_history")
+
+    @retry_with_backoff(retries=5, delay=1)
     async def _cold_start(self, rounds: int = 10):
         """
         Bootstraps QwenBot before user input:
@@ -81,6 +86,7 @@ class QwenBot:
         - Generate synthetic QA pairs using CoT + Vanna
         - Run SQL, reason, and save back into memory
         """
+        self.reset_history()
         memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
         log.info(f"[Cold Start] started!")
         # ───── Step 1: Load prior memory into STM & chat_history ─────
