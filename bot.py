@@ -1,10 +1,11 @@
 # bot.py  ── Qwen (reasoning)  ↔  Gemini-Vanna (SQL RAG)
 import os, re, asyncio, logging
-from gradio_client import Client
+# from gradio_client import Client
 from utils   import execute_sql
-from sql     import run_and_score, vanna          # vanna = GeminiVanna instance
+from sql     import run_and_score, vanna # vanna = GeminiVanna instance
 import translation as tr
 import memory
+from google import genai   
 from llm_ut  import retry_with_backoff
 
 log = logging.getLogger("qwen-bot")
@@ -16,27 +17,56 @@ SYSTEM_PROMPT = (
     "NEVER reveal your thoughts — only the final answer."
 )
 
-HF_SPACE = "mikeee/qwen-7b-chat"
-API_NAME = "/user"
+# ──────────── Gemini Config ────────────
+G_API_KEY = os.getenv("GEMINI_FLASH_API_KEY")
+if not G_API_KEY:
+    raise RuntimeError("⚠️  GEMINI_FLASH_API_KEY env-var is missing")
+genai_client = genai.Client(api_key=G_API_KEY)
+GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"
+
+def _clean_md(text: str) -> str:
+    """Strip markdown fences"""
+    if "```" in text:
+        match = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+        if match:
+            return match[0].strip()
+    return text.strip()
 
 class QwenBot:
     def __init__(self):
-        token    = os.getenv("HF_TOKEN")
-        self.client = Client(HF_SPACE, hf_token=token or None)
-        self.chat_history : list[tuple[str, str]] = []
+        self.chat_history: list[dict] = []  # Gemini expects message dicts
         asyncio.run(self._cold_start())
 
-    # ──────────── Low-level LLM wrappers ────────────
-    @retry_with_backoff(retries=4, delay=1.5)
     def _llm(self, prompt: str) -> str:
-        reply, hist = self.client.predict(prompt, self.chat_history, api_name=API_NAME)
-        self.chat_history = hist
-        return reply
+        """Use Gemini with memory"""
+        # Clip history down to minimize max token input to Gemini
+        MAX_HISTORY = 30 # 30 entries max
+        if len(self.chat_history) > MAX_HISTORY:
+            self.chat_history = self.chat_history[-MAX_HISTORY:]
+        # User prompt
+        self.chat_history.append({"role": "user", "content": prompt})
+        try:
+            rsp = genai_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=self.chat_history
+            )
+            self.chat_history.append({"role": "assistant", "content": rsp.text})
+            return _clean_md(rsp.text)
+        except Exception as e:
+            log.error(f"[Gemini] memory LLM failed: {e}")
+            raise
 
-    @retry_with_backoff(retries=4, delay=1.5)
     def _llm_no_mem(self, prompt: str) -> str:
-        reply, _ = self.client.predict(prompt, [], api_name=API_NAME)
-        return reply
+        """Stateless one-shot call"""
+        try:
+            rsp = genai_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[{"role": "user", "content": prompt}]
+            )
+            return _clean_md(rsp.text)
+        except Exception as e:
+            log.error(f"[Gemini] no-mem LLM failed: {e}")
+            raise
 
     async def _cold_start(self, rounds: int = 10):
         """
@@ -51,7 +81,8 @@ class QwenBot:
         for doc in prior_memories:
             q, sql, ans = doc["question"], doc["sql"], doc.get("answer", "")
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": ans})
-            self.chat_history.append((f"(memory) {q}", ans))
+            self.chat_history.append({"role": "user", "content": f"(memory) {q}"})
+            self.chat_history.append({"role": "assistant", "content": ans})
         log.info("✅ Loaded %d memory entries into STM and chat_history", len(prior_memories))
         # ───── Step 2: Describe current schema using Qwen ─────
         schema = memory.db_schema() if hasattr(memory, 'db_schema') else {}  # fallback
@@ -59,7 +90,7 @@ class QwenBot:
         intro = f"Database schema:\n{schema_txt}\n\nSummarise each table and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
-        self.chat_history.append(("(schema summary)", summary))
+        self.chat_history.append({"role": "assistant", "content": f"(schema summary) {summary}"})
         log.info("🧠 Added schema summary to LTM + STM")
         # ───── Step 3: Chain-of-thought enrichment ─────
         for i in range(1, rounds + 1):
