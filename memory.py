@@ -76,3 +76,8 @@ def all() -> list[dict]:
 def remove_by_hash(doc_id: str) -> bool:
     result = ltm_coll.delete_one({"_id": doc_id})
     return result.deleted_count > 0
+
+def clear_all():
+    STM.clear()
+    ltm_coll.delete_many({})
+    log.info("[MEMORY] All STM and LTM cleared.")
