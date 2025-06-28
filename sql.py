@@ -27,18 +27,9 @@ class GeminiVanna(VannaBase):
 
     @retry_with_backoff(retries=4, delay=1.5)
     def submit_prompt(self, prompt, **kwargs) -> str:
-        try:
-            if isinstance(prompt, list):
-                content = "\n".join(m["content"] for m in prompt)
-            else:
-                content = str(prompt)
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=content
-            )
-            return response.text.strip()
-        except Exception as e:
-            raise RuntimeError(f"[GeminiVanna] Prompt error: {e}")
+        content = "\n".join(p["content"] for p in prompt) if isinstance(prompt, list) else str(prompt)
+        resp = self.client.models.generate_content(model=self.model, contents=[{"role": "user", "parts": [{"text": content}]}])
+        return resp.text.strip()
 
     # helper used by vanna-core for scoring:
     def score_sql(self, question: str, sql: str) -> float:
