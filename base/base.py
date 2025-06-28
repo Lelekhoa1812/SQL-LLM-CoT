@@ -15,7 +15,7 @@ import sqlparse
 
 log = logging.getLogger("vanna-utils")
 
-from ..types import TrainingPlan, TrainingPlanItem
+from types import TrainingPlan, TrainingPlanItem
 
 class VannaBase(ABC):
     def __init__(self, config=None):
