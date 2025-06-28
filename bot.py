@@ -45,10 +45,14 @@ class QwenBot:
         if len(self.chat_history) > MAX_HISTORY:
             self.chat_history = self.chat_history[-MAX_HISTORY:]
         # User prompt
+        if len(self.chat_history) < 1:
+            contents = prompt
+        else:
+            contents = self.chat_history + Content(role="user", parts=[Part(text=prompt)])
         try:
             rsp = genai_client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=self.chat_history
+                contents=contents
             )
             self.chat_history.append(Content(role="user", parts=[Part(text=f"(question): {prompt} - (answer) {rsp.text}")]))
             return _clean_md(rsp.text)
@@ -75,7 +79,7 @@ class QwenBot:
         - Generate synthetic QA pairs using CoT + Vanna
         - Run SQL, reason, and save back into memory
         """
-        memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
+        # memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
         log.info(f"[Cold Start] started!")
         # ───── Step 1: Load prior memory into STM & chat_history ─────
         prior_memories = memory.retrieve_ltm("", top_k=50)
