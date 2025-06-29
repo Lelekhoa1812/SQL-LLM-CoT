@@ -1,6 +1,5 @@
 # bot.py  ── Qwen (reasoning)  ↔  Gemini-Vanna (SQL RAG)
 import os, re, asyncio, logging, json
-# from gradio_client import Client
 from utils   import execute_sql, db_schema
 from sql     import run_and_score, vanna # vanna = GeminiVanna instance
 import translation as tr
@@ -113,7 +112,7 @@ class QwenBot:
         summary = await asyncio.to_thread(self._llm, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
         self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
-        log.info("🧠 Added schema summary to LTM + STM")
+        log.info(f"🧠 Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{schema_txt}")
         # ───── Step 3: CoT-based self-play QA generation ─────
         for i in range(1, rounds + 1):
             log.info(f"[ColdStart-Round {i}] Generating CoT QA pairs…")
@@ -142,7 +141,6 @@ class QwenBot:
                     continue
                 try:
                     # ───── Step 3.1: Refine via Vanna ─────
-                    few_shots = vanna.similar_qa(q)
                     few_shots = vanna.similar_qa(q)
                     prompt = vanna.get_sql_prompt(question=q, shots=few_shots)
                     # Ask bot agent to generate N variations 3-5 per prompt
