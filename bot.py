@@ -143,12 +143,20 @@ class QwenBot:
                 try:
                     # ───── Step 3.1: Refine via Vanna ─────
                     few_shots = vanna.similar_qa(q)
+                    few_shots = vanna.similar_qa(q)
                     prompt = vanna.get_sql_prompt(question=q, shots=few_shots)
-                    raw_response = vanna.submit_prompt(prompt)
-                    refined_sql = vanna.extract_sql(raw_response)
-                    vanna.add_question_sql(q, refined_sql)
+                    # Ask bot agent to generate N variations 3-5 per prompt
+                    sql_candidates = []
+                    for _ in range(3):
+                        raw = vanna.submit_prompt(prompt)
+                        sql = vanna.extract_sql(raw)
+                        if sql and sql.lower().startswith("select"):
+                            sql_candidates.append(sql)
+                    # Optional: add the bot Gemini version if valid
+                    if raw_sql.lower().startswith("select"):
+                        sql_candidates.append(raw_sql)
                     # ───── Step 3.2: Score + execute ─────
-                    best_sql, rows = run_and_score(q, [refined_sql])
+                    best_sql, rows = run_and_score(q, sql_candidates)
                     if not rows:
                         raise ValueError("Query returned 0 rows")
                     # ───── Step 3.3: Reason with Qwen ─────
