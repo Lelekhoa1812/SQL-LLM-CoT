@@ -5,6 +5,9 @@ import vanna as vn
 from vanna.base import VannaBase
 from google import genai                           
 from llm_ut import retry_with_backoff
+from memory import add_ltm_entry
+import utils
+from sqlalchemy import create_engine, text as sa_text
 
 log = logging.getLogger("sql-vanna")
 log.info("🚀 Bootstrapping Vanna…")
@@ -67,9 +70,6 @@ class GeminiVanna(VannaBase):
         """
         Execute SQL and store into memory if valid. Safe execution with fallback.
         """
-        from memory import add_ltm_entry
-        import utils
-        from sqlalchemy import text as sa_text
         rows = []
         try:
             rows = pd.read_sql(sa_text(sql), utils.ENGINE).to_dict(orient="records")
@@ -116,9 +116,6 @@ else:
 # ────────────────────────────────────────────────
 # 2️.  Create the Vanna agent bound to our DB
 # ────────────────────────────────────────────────
-from sqlalchemy import create_engine, text
-import utils                              
-
 ENGINE = utils.ENGINE
 vanna = llm
 
@@ -142,5 +139,5 @@ def run_and_score(question: str, sqls: list[str]) -> tuple[str, list[dict]]:
     # Safety-belt: LIMIT 1000 if user forgot
     safe_sql = best_sql if re.search(r"\blimit\b", best_sql, re.I) else best_sql.rstrip(";") + " LIMIT 1000;"
     # Read SQL records
-    rows = pd.read_sql(text(safe_sql), ENGINE).to_dict(orient="records")
+    rows = pd.read_sql(sa_text(safe_sql), ENGINE).to_dict(orient="records")
     return best_sql, rows
