@@ -7,5 +7,5 @@ sdk: docker
 sdk_version: latest
 pinned: false
 license: apache-2.0
-short_description: Qwen3 + Jina-v2 reranker return reasoning SQL and info
+short_description: Gemini + Vanna-based customized reranker return reasoned SQL, db mockup and info
 ---
