@@ -42,10 +42,45 @@ class GeminiVanna(VannaBase):
             score = 0.0
         return max(0.0, min(score, 1.0))
     
+    def extract_sql(self, text: str) -> str:
+        """
+        Extract SQL from Gemini's response, preferring ```sql fenced blocks.
+        """
+        match = re.search(r"```sql\s*([\s\S]*?)```", text, re.I)
+        if match:
+            return match.group(1).strip().rstrip(";") + ";"
+        match = re.search(r"(SELECT[\s\S]*?;)", text, re.I)
+        return match.group(1).strip() if match else ""
+
+    def similar_qa(self, q: str, k: int = 3):
+        """
+        Retrieve top-k similar (question, SQL) pairs from LTM via memory vector search.
+        """
+        from memory import retrieve_ltm
+        docs = retrieve_ltm(q, top_k=k)
+        return [
+            {"question": d.get("question", ""), "sql": d.get("sql", "")}
+            for d in docs if "question" in d and "sql" in d
+        ]
+
+    def add_question_sql(self, q: str, sql: str):
+        """
+        Execute SQL and store into memory if valid. Safe execution with fallback.
+        """
+        from memory import add_ltm_entry
+        import utils
+        from sqlalchemy import text as sa_text
+        rows = []
+        try:
+            rows = pd.read_sql(sa_text(sql), utils.ENGINE).to_dict(orient="records")
+        except Exception as e:
+            log.warning(f"[add_question_sql] SQL execution failed: {e}")
+        add_ltm_entry(q, sql, rows, "")
+
+    
     # Minimal viable set of dummy implementations to satisfy ABC
     def add_ddl(self, *args, **kwargs): pass
     def add_documentation(self, *args, **kwargs): pass
-    def add_question_sql(self, *args, **kwargs): pass
     def get_related_ddl(self, *args, **kwargs): return []
     def get_related_documentation(self, *args, **kwargs): return []
     def get_similar_question_sql(self, *args, **kwargs): return []
