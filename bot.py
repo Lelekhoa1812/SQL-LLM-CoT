@@ -1,5 +1,5 @@
 # bot.py  ── Qwen (reasoning)  ↔  Gemini-Vanna (SQL RAG)
-import os, re, asyncio, logging
+import os, re, asyncio, logging, json
 # from gradio_client import Client
 from utils   import execute_sql, db_schema
 from sql     import run_and_score, vanna # vanna = GeminiVanna instance
@@ -78,73 +78,95 @@ class QwenBot:
         self.chat_history = []
         logging.info("🧼 Cleared chat_history")
 
+    def _parse_cot_fallback(text: str) -> list[dict]:
+        questions = re.findall(r"(?i)question:\s*(.+?)(?:\n|$)", text)
+        sqls = re.findall(r"```sql\s*(.*?)```|(?:SELECT[\s\S]+?;)", text, flags=re.I)
+        clean_sqls = [s if isinstance(s, str) else s[0] for s in sqls]
+        return [{"question": q.strip(), "sql": s.strip()} for q, s in zip(questions, clean_sqls)]
+
     @retry_with_backoff(retries=5, delay=1)
     async def _cold_start(self, rounds: int = 10):
         """
         Bootstraps QwenBot before user input:
-        - Load LTM into STM
-        - Generate synthetic QA pairs using CoT + Vanna
-        - Run SQL, reason, and save back into memory
+        - Loads LTM into STM
+        - Summarizes schema
+        - Generates question-SQL pairs using Gemini
+        - Executes, reranks, reasons over them
+        - Saves only successful ones into LTM and STM
         """
         self.reset_history()
-        memory.clear_all() # Only use this to clear all (LTM/STM) history, recommend comment-in
-        log.info(f"[Cold Start] started!")
-        # ───── Step 1: Load prior memory into STM & chat_history ─────
+        memory.clear_all()
+        log.info("[Cold Start] started")
+        # ───── Step 1: Load existing memory into STM/chat_history ─────
         prior_memories = memory.retrieve_ltm("", top_k=50)
         for doc in prior_memories:
-            q, sql, ans = doc["question"], doc["sql"], doc.get("answer", "")
+            q = doc.get("question", "")
+            sql = doc.get("sql", "")
+            ans = doc.get("answer", "")
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": ans})
-            self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer) {ans}")]))
+            self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer): {ans}")]))
         log.info("✅ Loaded %d memory entries into STM and chat_history", len(prior_memories))
-        # ───── Step 2: Describe current schema using Qwen ─────
+        # ───── Step 2: Generate schema summary ─────
         schema = db_schema()
         schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
-        log.info(f"__SCHEMA_RAW__\n{schema_txt}")
-        intro = f"Database schema:\n{schema_txt}\n\nSummarise each table and typical queries."
+        intro = f"Database schema:\n{schema_txt}\n\nSummarize each table and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
         memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
         self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
-        log.info(f"🧠 Added schema summary to LTM + STM: {summary}")
-        # ───── Step 3: Chain-of-thought enrichment ─────
+        log.info("🧠 Added schema summary to LTM + STM")
+        # ───── Step 3: CoT-based self-play QA generation ─────
         for i in range(1, rounds + 1):
-            log.info(f"[ColdStart-Round {i}] Generating CoT questions…")
+            log.info(f"[ColdStart-Round {i}] Generating CoT QA pairs…")
             cot_prompt = (
-                "Generate several realistic business questions about sales data. "
-                "Cover time trends, geographic differences, product categories, etc. "
-                "For each question, include a SQL query below it."
+                "Generate 5 realistic business questions about sales data, covering trends, regions, products, customers.\n"
+                "Return ONLY a JSON array with exact structure:\n"
+                "[{\"question\": \"...\", \"sql\": \"SELECT ...;\"}, ...]\n"
+                "Use MySQL. Each SQL must end with a semicolon."
             )
-            cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
-            questions = re.findall(r"Question:\s*(.+)", cot_raw, re.I)
-            sqls      = re.findall(r"(SELECT .*?;)", cot_raw, re.I | re.S)
-            # Save valid LTMs
-            memory.add_ltm_entry(f"__COT_{i}__", "", [], cot_raw)
-            log.info(f"CoT-{i}: Generated {len(questions)} Q–SQL candidates")
-            for q, raw_sql in zip(questions, sqls):
+            try:
+                cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
                 try:
-                    # Rerank with Vanna (only 1 candidate here)
+                    qa_pairs = json.loads(cot_raw)
+                except Exception:
+                    log.warning(f"[COT-{i}] Invalid JSON returned, attempting regex fallback")
+                    qa_pairs = self._parse_cot_fallback(cot_raw)
+                log.info(f"CoT-{i}: Parsed {len(qa_pairs)} question–SQL candidates")
+            except Exception as e:
+                log.error(f"[COT-{i}] Failed to generate questions: {e}")
+                continue
+            # CoT loops
+            for pair in qa_pairs:
+                q = pair.get("question", "").strip()
+                raw_sql = pair.get("sql", "").strip()
+                if not q or not raw_sql:
+                    continue
+                try:
+                    # ───── Step 3.1: Refine via Vanna ─────
                     few_shots = vanna.similar_qa(q)
                     prompt = vanna.get_sql_prompt(question=q, shots=few_shots)
-                    raw = vanna.submit_prompt(prompt)
-                    sql = vanna.extract_sql(raw)
-                    vanna.add_question_sql(q, sql)
-                    best_sql, rows = run_and_score(q, [sql])
-                    if not rows: continue
-                    # Use Qwen to reason over output
-                    reason_prompt = (
+                    raw_response = vanna.submit_prompt(prompt)
+                    refined_sql = vanna.extract_sql(raw_response)
+                    vanna.add_question_sql(q, refined_sql)
+                    # ───── Step 3.2: Score + execute ─────
+                    best_sql, rows = run_and_score(q, [refined_sql])
+                    if not rows:
+                        raise ValueError("Query returned 0 rows")
+                    # ───── Step 3.3: Reason with Qwen ─────
+                    reasoning_prompt = (
                         f"Q: {q}\nSample result:\n{str(rows[:5])}\n"
-                        "What can you deduce from this data?"
+                        "What insight can you infer from this result?"
                     )
-                    rationale = await asyncio.to_thread(self._llm, reason_prompt)
-                    # Save all to memory
-                    answer_pack = {"sql": best_sql, "rows": rows, "answer": rationale}
-                    memory.add_stm(q, answer_pack)
+                    rationale = await asyncio.to_thread(self._llm, reasoning_prompt)
+                    # ───── Step 3.4: Persist only valid results ─────
+                    payload = {"sql": best_sql, "rows": rows, "answer": rationale}
+                    memory.add_stm(q, payload)
                     memory.add_ltm_entry(q, best_sql, rows, rationale)
-                    self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer) {rationale}")]))
-                    log.info(f"✅ [COT-{i}] Stored: {q[:40]}...")
+                    self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer): {rationale}")]))
+                    log.info(f"✅ [COT-{i}] Stored: {q[:60]}")
                 except Exception as e:
-                    log.warning(f"❌ [COT-{i}] Failed for Q: {q[:30]} — {e}")
-        # Logs
+                    log.warning(f"❌ [COT-{i}] Failed to process Q: {q[:40]} — {e}")
         log.info(f"[Cold Start] completed: {rounds} CoT rounds finished")
+
 
     # ──────────── Helper: ask Gemini-Vanna for 1 SQL ────────────
     @retry_with_backoff(retries=3, delay=1.5)
