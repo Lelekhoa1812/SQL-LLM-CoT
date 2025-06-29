@@ -7,5 +7,5 @@ sdk: docker
 sdk_version: latest
 pinned: false
 license: apache-2.0
-short_description: Gemini + Vanna customized reranker, reasoned SQL, db mockup and info
+short_description: GeminiVanna customized reranker, reasoned SQL, db mockup and info
 ---
