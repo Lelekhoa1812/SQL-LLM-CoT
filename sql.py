@@ -36,7 +36,7 @@ class GeminiVanna(VannaBase):
     def submit_prompt(self, prompt, **kwargs) -> str:
         """`prompt` is plain text built by get_sql_prompt()."""
         content = "\n".join(p["content"] for p in prompt) if isinstance(prompt, list) else str(prompt)
-        resp = self.client.models.generate_content(model=self.model, contents=[{"role": "user", "parts": [{"text": content}]}])
+        resp = self.client.generate_content(model=self.model, contents=[{"role": "user", "parts": [{"text": content}]}])
         return resp.text.strip()
 
     # helper used by vanna-core for scoring:

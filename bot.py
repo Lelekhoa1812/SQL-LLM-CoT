@@ -90,11 +90,21 @@ class QwenBot:
         Returns list of table names in lower-case.
         """
         candidate_tables = list(db_schema().keys())  # dynamic!
-        tbl_str = ", ".join(candidate_tables)
+        tbl_contexts = [
+            f"{tbl}: {get_table_context(tbl)}"
+            for tbl in candidate_tables if get_table_context(tbl)
+        ]
+        # tbl_str = ", ".join(candidate_tables)
+        # prompt = (
+        #     f"Given the following user text or SQL, pick which tables "
+        #     f"it is MOST related to from this list:\n{tbl_str}\n\n"
+        #     f"TEXT:\n{text}\n\nReturn a JSON array of table names."
+        # )
         prompt = (
-            f"Given the following user text or SQL, pick which tables "
-            f"it is MOST related to from this list:\n{tbl_str}\n\n"
-            f"TEXT:\n{text}\n\nReturn a JSON array of table names."
+            "Below are table summaries:\n"
+            + "\n".join(tbl_contexts[:20]) + "\n\n"
+            f"Given the following user question or SQL fragment:\n{text}\n\n"
+            "Which tables are most relevant? Return a JSON array of table names."
         )
         raw = await asyncio.to_thread(self._llm_no_mem, prompt)
         try:
@@ -124,7 +134,7 @@ class QwenBot:
             q, sql, a = doc["question"], doc["sql"], doc["answer"]
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": a})
             self.chat_history.append(Content(role="model", parts=[Part(text=f"(Q): {q} (A): {a}")]))
-        log.info("✅ Loaded %d memory entries into STM and chat_history")
+        log.info("✅ Loaded memory entries into STM and chat_history")
         # ───── Step 2: Generate schema summary ─────
         schema = db_schema()
         schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
@@ -225,9 +235,12 @@ class QwenBot:
 
     # ──────────── Helper: ask LLM to brainstorm N SQLs ────────────
     async def _brainstorm_sqls(self, question_en: str, n: int = 6):
+        relevant_tables = await self._schema_reason(question_en)
+        schema_ctx = "\n".join([f"{t} → {get_table_context(t)}" for t in relevant_tables])
         prompt = (
-            f"Give {n} SQL queries answering question:\n"
-            f"\"{question_en}\"\nOnly return SQL, no explanation."
+            f"You are a SQL assistant. Below is relevant schema:\n{schema_ctx}\n\n"
+            f"Now give {n} SQL queries to answer:\n\"{question_en}\"\n"
+            "Only return raw SQL queries, no explanation."
         )
         raw = await asyncio.to_thread(self._llm, prompt)
         sqls = re.findall(r"SELECT .*?;", raw, flags=re.I | re.S)
