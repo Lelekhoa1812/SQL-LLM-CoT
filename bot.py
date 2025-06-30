@@ -7,6 +7,7 @@ import memory
 from google import genai   
 from google.genai.types import Content, Part
 from llm_ut  import retry_with_backoff
+from rotator import RotatingGeminiClient
 
 log = logging.getLogger("qwen-bot")
 log.info("🚀 Booting Qwen assistant")
@@ -19,10 +20,7 @@ SYSTEM_PROMPT = (
 )
 
 # ──────────── Gemini Config ────────────
-G_API_KEY = os.getenv("GEMINI_FLASH_API_KEY")
-if not G_API_KEY:
-    raise RuntimeError("⚠️  GEMINI_FLASH_API_KEY env-var is missing")
-genai_client = genai.Client(api_key=G_API_KEY)
+genai_client = RotatingGeminiClient() # Switch between Gemini clients when one not available
 GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"
 
 def _clean_md(text: str) -> str:

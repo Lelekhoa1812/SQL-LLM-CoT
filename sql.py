@@ -11,6 +11,7 @@ from llm_ut import retry_with_backoff
 from memory import add_ltm_entry
 import utils
 from sqlalchemy import text as sa_text
+from rotator import RotatingGeminiClient
 
 log = logging.getLogger("sql-vanna")
 log.info("🚀 Bootstrapping Vanna…")
@@ -26,7 +27,7 @@ MODEL = "gemini-2.5-flash-preview-04-17"
 class GeminiVanna(VannaBase):
     def __init__(self):
         super().__init__() 
-        self.client = genai.Client(api_key=os.getenv("GEMINI_FLASH_API_KEY"))
+        self.client = RotatingGeminiClient
         self.dialect = "mysql"
         schema = utils.db_schema() # preload DDL from schema so get_sql_prompt() has context
         for t, cols in schema.items():
