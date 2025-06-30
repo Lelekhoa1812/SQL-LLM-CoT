@@ -44,7 +44,7 @@ def execute_sql(sql: str) -> list[dict]:
     try:
         return _cached_query(sql)
     except Exception as e:
-        log.error("⚠️ SQL failed: %s", e)
+        log.error("⚠️ [UTILS] SQL failed: %s", e)
         raise
 
 # Parallel execution
@@ -55,14 +55,13 @@ async def async_execute(sql: str) -> list[dict]:
         await DATABASE.disconnect()
         return [dict(row) for row in results]
     except Exception as e:
-        log.error("⚠️ async SQL failed: %s", e, " Attempt backup.")
-        execute_sql(sql)
-        raise
+        log.error("⚠️ [UTILS] async SQL failed: %s", e, " Attempt backup.")
+        return execute_sql(sql)   # blocks but never raises here
 
 # ---------- Introspect schema once & cache ----------
 @functools.cache
 def db_schema() -> dict[str, list[str]]:
     insp = inspect(ENGINE)
     schema = {tbl: [col["name"] for col in insp.get_columns(tbl)] for tbl in insp.get_table_names()}
-    log.info("🎯 [UTILS] Lược đồ DB đã cache: %s", schema.keys())
+    log.info("🎯 [UTILS] DB schema cached: %s", schema.keys())
     return schema

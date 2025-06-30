@@ -1,28 +1,23 @@
 # memory.py
-import os, json, time, logging, pathlib, re
+import os, logging, re, uuid, numpy as np
 
 # DBs
 from cachetools import LRUCache
-from pymongo import MongoClient
-import numpy as np
-
-# RAG
-from sentence_transformers import SentenceTransformer
-from chromadb import Client
-from chromadb.config import Settings
+from pymongo import MongoClient, ASCENDING
 from sentence_transformers import SentenceTransformer
 
 log = logging.getLogger("memory-log")
 log.info("🚀 Starting memory handler...")
+
+# Embedding model
+EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+def _embed(txt: str):   # returns list[float]
+    return EMBED_MODEL.encode([txt], normalize_embeddings=True)[0].tolist()
+
 # -------- STM: in-process LRU cache -----------
 STM = LRUCache(maxsize=128)
-
-def get_stm(question: str):
-    return STM.get(question)
-
-def add_stm(question: str, resp: dict):
-    STM[question] = resp
-    log.info("[STM] Cached response for `%s`", question)
+get_stm  = STM.get
+add_stm  = lambda q, r: STM.__setitem__(q, r)
 
 # -------- LTM: MongoDB + embeddings -----------
 MONGO_URI = os.getenv("MONGO_URI")
@@ -30,80 +25,101 @@ DB_NAME = os.getenv("MONGO_DB_NAME", "cpg_ltm") # Fallback name
 mongo = MongoClient(MONGO_URI)
 db = mongo[DB_NAME]
 
-# Vector embedding model loader and chroma
-EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-CHROMA_DIR = os.getenv("CHROMA_DIR", ".chromadb")
-chroma_client = Client(
-    Settings(
-        chroma_db_impl="duckdb+parquet",
-        persist_directory=CHROMA_DIR,
-        anonymized_telemetry=False
-    )
-)
-chroma_collection = chroma_client.get_or_create_collection("ltm")
-SQL_COL  = chroma_client.get_or_create_collection("sql_pairs")
-META_COL = chroma_client.get_or_create_collection("table_meta")
+# Whenever a new collection is created we add an index on norm_sql
+def _get_collection(name: str):
+    col = db[name]
+    if "norm_sql_1" not in col.index_information():
+        col.create_index([("norm_sql", ASCENDING)])
+    return col
 
-def _uuid():            # tiny helper
-    import uuid; return str(uuid.uuid4())
+# ───────── Helpers
+def _norm_sql(sql: str) -> str:
+    return re.sub(r"\s+", " ", sql.lower()).strip()
 
-def _embed(txt: str):   # returns list[float]
-    return EMBED_MODEL.encode([txt], normalize_embeddings=True)[0].tolist()
+# Lightweight regex fallback for table detection
+_TABLE_RE = re.compile(r"\b(from|join)\s+([a-zA-Z0-9_]+)", re.I)
+def _resolve_chunk(sql: str) -> str | None:
+    m = _TABLE_RE.search(sql)
+    return m.group(2).lower() if m else None
 
-# ------------ PUBLIC API -------------------------------------------------
-
-def add_sql_pair(question: str, sql: str, rows: list, answer: str):
+# ------------ PUBLIC API -----------------------
+def add_sql_pair(
+        question      : str,
+        sql           : str,
+        rows          : list,
+        answer        : str,
+        collection_id : str | None = None
+    ) -> None:
     """
-    • Dedup on *SQL text* (case/space-insensitive)  
-    • If already present -> merge rows & keep best answer length>0
+    Insert / merge a (question, SQL) pair into the right collection.
+
+    • If `collection_id` is given, use it verbatim.
+    • Otherwise resolve the first table name inside the SQL string.
     """
-    norm = re.sub(r"\s+", " ", sql.lower().strip())
-    existing = SQL_COL.query(
-        query_texts=[norm], n_results=1, include=["documents", "metadatas"]
-    )
-    if existing["metadatas"] and existing["metadatas"][0]:
-        doc_id  = existing["ids"][0][0]
-        meta    = existing["metadatas"][0][0]
-        merged  = {
-            "question": question,
-            "sql": sql,
-            "rows": (meta["rows"] + rows)[:2_000],   # cap
-            "answer": answer or meta.get("answer", "")
-        }
-        SQL_COL.update(ids=[doc_id], metadatas=[merged])
+    coll_name = collection_id or _resolve_chunk(sql)
+    if coll_name is None:
+        coll_name = "unknown"
+    # Get collection name
+    col = _get_collection(coll_name)
+    doc = {
+        "question"  : question,
+        "sql"       : sql,
+        "norm_sql"  : _norm_sql(sql),
+        "embedding" : _embed(question),
+        "rows"      : rows[:2_000],
+        "answer"    : answer
+    }
+    # Merge on identical norm_sql
+    existing = col.find_one({"norm_sql": doc["norm_sql"]})
+    if existing:
+        merged = {**existing, **doc}
+        col.update_one({"_id": existing["_id"]}, {"$set": merged})
         return
+    col.insert_one(doc)
 
-    SQL_COL.add(
-        ids=[_uuid()],
-        documents=[answer],
-        embeddings=[_embed(question)],
-        metadatas=[{
-            "question": question, "sql": sql,
-            "rows": rows, "answer": answer
-        }]
-    )
+def retrieve_sql(
+        query        : str,
+        k            : int = 3,
+        collection_id: str | list[str] | None = None
+    ) -> list[dict]:
+    """
+    Semantic top-k retrieval from one or many collections.
+    • If collection_id is None → search all collections lazily (slow but OK for <10k docs)
+    • If list[str] → union of those
+    • If str      → only that coll
+    """
+    target_colls: list[str]
+    if collection_id is None:
+        target_colls = [c for c in db.list_collection_names() if not c.startswith("system.")]
+    elif isinstance(collection_id, str):
+        target_colls = [collection_id]
+    else:
+        target_colls = collection_id
+    # Embed query to compute sim-score
+    query_emb = np.array(_embed(query))
+    scored: list[tuple[float, dict]] = []
+    # Retrieval and examination
+    for name in target_colls:
+        col = db[name]
+        for d in col.find({}, {"embedding":1, "question":1, "sql":1, "rows":1, "answer":1}):
+            emb = np.array(d["embedding"])
+            scored.append((float(np.dot(query_emb, emb)), d))
+    # Sort on sim-score
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [d for _, d in scored[:k]]
 
-def add_table_meta(tbl_name: str, doc: str):
-    META_COL.add(
-        ids=[_uuid()],
-        documents=[doc],
-        embeddings=[_embed(tbl_name)],
-        metadatas=[{"table": tbl_name}]
-    )
-
-def retrieve_sql(question: str, k: int = 3) -> list[dict]:
-    res = SQL_COL.query(
-        query_embeddings=[_embed(question)],
-        n_results=k,
-        include=["metadatas"]
-    )
-    return res["metadatas"][0] if res["metadatas"] else []
+# Save / get table context  (tiny docs per table)
+def save_table_context(tbl, ctx): db["table_context"].update_one(
+        {"tbl": tbl}, {"$set": {"context": ctx, "embedding": _embed(tbl)}}, upsert=True)
+def get_table_context(tbl): doc = db["table_context"].find_one({"tbl": tbl}); return doc["context"] if doc else ""
 
 
 # ------------ SERVICES --------------------------------------------------
+# Maintenance
 def clear_all():
     STM.clear()
-    SQL_COL.delete(where={})
-    META_COL.delete(where={})
-    log.info("[MEMORY] All STM and LTM cleared 🧹.")
+    for n in db.list_collection_names():
+        if not n.startswith("system."):
+            db[n].delete_many({})
+    log.info("🧹 Cleared STM and Mongo LTM")
 

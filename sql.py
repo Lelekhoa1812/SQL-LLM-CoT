@@ -8,7 +8,7 @@ from base.base import VannaBase  # Custom lightweight Vanna
 from google import genai  
 # Util services
 from llm_ut import retry_with_backoff
-from memory import add_ltm_entry
+from memory import add_sql_pair, retrieve_sql, get_stm, add_stm
 import utils
 from sqlalchemy import text as sa_text
 from rotator import RotatingGeminiClient
@@ -59,8 +59,7 @@ class GeminiVanna(VannaBase):
         """
         Retrieve top-k similar (question, SQL) pairs from LTM via memory vector search.
         """
-        from memory import retrieve_ltm
-        docs = retrieve_ltm(q, top_k=k) or super().similar_qa(q, k)
+        docs = retrieve_sql(q, top_k=k) or super().similar_qa(q, k)
         return [
             {"question": d.get("question", ""), "sql": d.get("sql", "")}
             for d in docs if "question" in d and "sql" in d
@@ -78,7 +77,7 @@ class GeminiVanna(VannaBase):
             log.warning(f"[add_question_sql] SQL execution failed: {e}")
             rows = []
         super().add_question_sql(q, sql)
-        add_ltm_entry(q, sql, rows, "")
+        add_sql_pair(q, sql, rows, "")
 
 # **Strongly preferable**
 if LLM_BACKEND == "openai":
@@ -111,15 +110,14 @@ vanna = llm
 # ────────────────────────────────────────────────
 # 3️.  A very small “rerank/verify-and-run” helper
 # ────────────────────────────────────────────────
-def run_and_score(question: str, sqls: List[str]):
+async def run_and_score(question: str, sqls: List[str]):
     """
     • score each SQL with Vanna
     • pick best
     • run via SQLAlchemy
     • return (best_sql, rows)
     """
-    if not sqls:
-        raise ValueError("No candidate SQL provided")
+    if not sqls: raise ValueError("No candidate SQL provided")
     rated = [(vanna.score_sql(question, s), s) for s in sqls]
     rated.sort(reverse=True)
     best_score, best_sql = rated[0]
@@ -130,6 +128,6 @@ def run_and_score(question: str, sqls: List[str]):
         else best_sql.rstrip(";") + " LIMIT 1000;"
     )
     # Read SQL save records to dict
-    rows = pd.read_sql(sa_text(safe_sql), utils.ENGINE).to_dict(orient="records")
+    rows = await utils.async_execute(safe_sql)
     return best_sql, rows
 

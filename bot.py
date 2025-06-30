@@ -1,9 +1,10 @@
 # bot.py  ── Qwen (reasoning)  ↔  Gemini-Vanna (SQL RAG)
 import os, re, asyncio, logging, json
-from utils   import execute_sql, db_schema
+from utils   import db_schema
 from sql     import run_and_score, vanna # vanna = GeminiVanna instance
 import translation as tr
 import memory
+from memory import add_sql_pair, retrieve_sql, get_stm, add_stm
 from google import genai   
 from google.genai.types import Content, Part
 from llm_ut  import retry_with_backoff
@@ -20,7 +21,7 @@ SYSTEM_PROMPT = (
 )
 
 # ──────────── Gemini Config ────────────
-genai_client = RotatingGeminiClient() # Switch between Gemini clients when one not available
+genai_client = RotatingGeminiClient()  # Switch between Gemini clients when one not available
 GEMINI_MODEL = "gemini-2.5-flash-preview-04-17"
 
 def _clean_md(text: str) -> str:
@@ -93,9 +94,10 @@ class QwenBot:
         """
         self.reset_history()
         memory.clear_all()
+        attempted_sql, eval_budget = set(), 30 # Refine duplicated SQLs and setting max budget allowance
         log.info("[Cold Start] started")
         # ───── Step 1: Load existing memory into STM/chat_history ─────
-        prior_memories = memory.retrieve_ltm("", top_k=50)
+        prior_memories = retrieve_sql("", top_k=50)
         for doc in prior_memories:
             q = doc.get("question", "")
             sql = doc.get("sql", "")
@@ -108,7 +110,7 @@ class QwenBot:
         schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
         intro = f"Database schema:\n{schema_txt}\n\nSummarize each table and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
-        memory.add_ltm_entry("__SCHEMA_SUMMARY__", "", [], summary)
+        add_sql_pair("__SCHEMA_SUMMARY__", "", [], summary)
         self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
         log.info(f"🧠 Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{schema_txt}")
         # ───── Step 3: CoT-based self-play QA generation ─────
@@ -151,8 +153,19 @@ class QwenBot:
                     # Optional: add the bot Gemini version if valid
                     if raw_sql.lower().startswith("select"):
                         sql_candidates.append(raw_sql)
+                    # --- dedup & already-tried filter
+                    dedup = []
+                    for s in sql_candidates:
+                        norm = re.sub(r"\s+", " ", s.lower().strip())
+                        if norm not in attempted_sql:
+                            attempted_sql.add(norm)
+                            dedup.append(s)
+                    sql_candidates = dedup[: min(10, eval_budget)]
+                    eval_budget -= len(sql_candidates)
+                    if not sql_candidates or eval_budget <= 0:
+                        break
                     # ───── Step 3.2: Score + execute ─────
-                    best_sql, rows = run_and_score(q, sql_candidates)
+                    best_sql, rows = await run_and_score(q, sql_candidates)
                     if not rows:
                         raise ValueError("Query returned 0 rows")
                     # ───── Step 3.3: Reason with Qwen ─────
@@ -164,7 +177,7 @@ class QwenBot:
                     # ───── Step 3.4: Persist only valid results ─────
                     payload = {"sql": best_sql, "rows": rows, "answer": rationale}
                     memory.add_stm(q, payload)
-                    memory.add_ltm_entry(q, best_sql, rows, rationale)
+                    add_sql_pair(q, best_sql, rows, rationale)
                     self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer): {rationale}")]))
                     log.info(f"✅ [COT-{i}] Stored: {q[:60]}")
                 except Exception as e:
@@ -181,6 +194,7 @@ class QwenBot:
         sql    = vanna.extract_sql(raw)
         vanna.add_question_sql(question_en, sql)
         return sql
+
 
     # ──────────── Helper: ask Qwen to brainstorm N SQLs ────────────
     async def _brainstorm_sqls(self, question_en: str, n: int = 6):
@@ -199,17 +213,17 @@ class QwenBot:
     async def refine_until_valid(self, question_vi: str, max_loops: int = 5):
         """Try STM ➜ LTM ➜ Vanna/Qwen loops until an executable SQL + answer."""
         question_en = await tr.a_vie_to_en(question_vi)
+        attempted_sql, eval_budget = set(), 30 # Refine duplicated SQLs and setting max budget allowance
         # 0) Cached?
         if (hit := memory.get_stm(question_en)):
             log.info("[STM] hit")
             return hit["sql"], hit["rows"], hit["answer"]
-        if (ltm := memory.retrieve_ltm(question_en, 1)):
+        if (ltm := retrieve_sql(question_en, 1)):
             doc = ltm[0]; memory.add_stm(question_en, doc)
             log.info("[LTM] hit")
             return doc["sql"], doc["rows"], doc["answer"]
         # Stack candidates
         last_error = ""
-        attempted_sql, eval_budget = set(), 30   # Refine duplicated SQLs and setting max budget
         for attempt in range(1, max_loops + 1):
             cand_sqls = []
             # (a) Ask Vanna
@@ -221,21 +235,25 @@ class QwenBot:
             if last_error:
                 self.chat_history.append(Content(role="model", parts=[Part(text=f"(error): {last_error}")]))
             cand_sqls += await self._brainstorm_sqls(question_en)
-            # Remove dupes while preserving order
-            seen, uniq = set(), []
-            for sql in cand_sqls:
-                key = re.sub(r"\s+", " ", sql.strip().lower())
-                if key not in seen:
-                    seen.add(key); uniq.append(sql)
-            cand_sqls = uniq[:10]           # keep it short for scorer
+            # --- dedup & already-tried filter
+            dedup = []
+            for s in cand_sqls:
+                norm = re.sub(r"\s+", " ", s.lower().strip())
+                if norm not in attempted_sql:
+                    attempted_sql.add(norm)
+                    dedup.append(s)
+            cand_sqls = dedup[: min(10, eval_budget)]
+            eval_budget -= len(cand_sqls)
+            if not cand_sqls or eval_budget <= 0:
+                break
             # (c) Pick best by Vanna scorer + verify
             try:
-                best_sql, rows = run_and_score(question_en, cand_sqls)
+                best_sql, rows = await run_and_score(question_en, cand_sqls)
                 if not rows: raise ValueError("0 rows returned")
                 answer = await self._craft_final_answer(question_en, rows)
                 payload = {"sql": best_sql, "rows": rows, "answer": answer}
                 memory.add_stm(question_en, payload)
-                memory.add_ltm_entry(question_en, best_sql, rows, answer)
+                add_sql_pair(question_en, best_sql, rows, answer)
                 log.info("Solved on attempt %d", attempt)
                 return best_sql, rows, answer
             except Exception as e:
