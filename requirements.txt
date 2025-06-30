@@ -13,8 +13,8 @@ cachetools
 gradio_client       # Server can't load Qwen3, yet use Gemini for API demo
 
 # RAG
-# faiss-cpu         # Lightweight but not efficient
-pymongo
+faiss-cpu           # Lightweight but not efficient
+pymongo 
 databases[aiomysql]
 # qdrant-client
 chromadb            # Switch to qdrant if needed

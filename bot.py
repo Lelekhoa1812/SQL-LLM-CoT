@@ -4,10 +4,13 @@ from utils   import db_schema
 from sql     import run_and_score, vanna # vanna = GeminiVanna instance
 import translation as tr
 import memory
-from memory import add_sql_pair, retrieve_sql, get_stm, add_stm
+from memory import (
+    add_sql_pair, retrieve_sql,
+    save_table_context, get_table_context
+)
 from google import genai   
 from google.genai.types import Content, Part
-from llm_ut  import retry_with_backoff
+from llm_ut  import retry_with_backoff 
 from rotator import RotatingGeminiClient
 
 log = logging.getLogger("qwen-bot")
@@ -16,8 +19,7 @@ log.info("🚀 Booting Qwen assistant")
 SYSTEM_PROMPT = (
     "You are a retail-data analysis assistant. "
     "Think step-by-step, proficient in SQL, "
-    "NEVER reveal your thoughts — only the final answer, "
-    "Convert this prompt to SQL backed up by historical data (if applicable)."
+    "NEVER reveal your thoughts — only the final answer."
 )
 
 # ──────────── Gemini Config ────────────
@@ -81,6 +83,27 @@ class QwenBot:
         sqls = re.findall(r"```sql\s*(.*?)```|(?:SELECT[\s\S]+?;)", text, flags=re.I)
         clean_sqls = [s if isinstance(s, str) else s[0] for s in sqls]
         return [{"question": q.strip(), "sql": s.strip()} for q, s in zip(questions, clean_sqls)]
+    
+    async def _schema_reason(self, text: str) -> list[str]:
+        """
+        Ask Gemini which table(s) the text relates to.
+        Returns list of table names in lower-case.
+        """
+        candidate_tables = list(db_schema().keys())  # dynamic!
+        tbl_str = ", ".join(candidate_tables)
+        prompt = (
+            f"Given the following user text or SQL, pick which tables "
+            f"it is MOST related to from this list:\n{tbl_str}\n\n"
+            f"TEXT:\n{text}\n\nReturn a JSON array of table names."
+        )
+        raw = await asyncio.to_thread(self._llm_no_mem, prompt)
+        try:
+            tables = json.loads(_clean_md(raw))
+            return [t.lower() for t in tables if t.lower() in candidate_tables]
+        except Exception:
+            # fallback: dumb regex
+            return [t for t in candidate_tables if t.lower() in text.lower()]
+
 
     @retry_with_backoff(retries=5, delay=1)
     async def _cold_start(self, rounds: int = 10):
@@ -97,22 +120,21 @@ class QwenBot:
         attempted_sql, eval_budget = set(), 30 # Refine duplicated SQLs and setting max budget allowance
         log.info("[Cold Start] started")
         # ───── Step 1: Load existing memory into STM/chat_history ─────
-        prior_memories = retrieve_sql("", top_k=50)
-        for doc in prior_memories:
-            q = doc.get("question", "")
-            sql = doc.get("sql", "")
-            ans = doc.get("answer", "")
-            memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": ans})
-            self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer): {ans}")]))
-        log.info("✅ Loaded %d memory entries into STM and chat_history", len(prior_memories))
+        for doc in retrieve_sql("", top_k=50):
+            q, sql, a = doc["question"], doc["sql"], doc["answer"]
+            memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": a})
+            self.chat_history.append(Content(role="model", parts=[Part(text=f"(Q): {q} (A): {a}")]))
+        log.info("✅ Loaded %d memory entries into STM and chat_history", len(doc))
         # ───── Step 2: Generate schema summary ─────
         schema = db_schema()
         schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
-        intro = f"Database schema:\n{schema_txt}\n\nSummarize each table and typical queries."
+        intro = f"Database schema:\n{schema_txt}\n\nSummarize each table, purposes, and typical queries."
         summary = await asyncio.to_thread(self._llm, intro)
-        add_sql_pair("__SCHEMA_SUMMARY__", "", [], summary)
+        for t, c in db_schema().items():
+            tbl_ctx = await asyncio.to_thread(self._llm, f"What is the table '{t}' about?\n{t}({', '.join(c)})")
+            save_table_context(t, tbl_ctx)
         self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
-        log.info(f"🧠 Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{schema_txt}")
+        log.info(f"🧠 Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{summary}")
         # ───── Step 3: CoT-based self-play QA generation ─────
         for i in range(1, rounds + 1):
             log.info(f"[ColdStart-Round {i}] Generating CoT QA pairs…")
@@ -184,7 +206,6 @@ class QwenBot:
                     log.warning(f"❌ [COT-{i}] Failed to process Q: {q[:40]} — {e}")
         log.info(f"[Cold Start] completed: {rounds} CoT rounds finished")
 
-
     # ──────────── Helper: ask Gemini-Vanna for 1 SQL ────────────
     @retry_with_backoff(retries=3, delay=1.5)
     def _vanna_sql(self, question_en: str) -> str:
@@ -195,12 +216,11 @@ class QwenBot:
         vanna.add_question_sql(question_en, sql)
         return sql
 
-
-    # ──────────── Helper: ask Qwen to brainstorm N SQLs ────────────
+    # ──────────── Helper: ask LLM to brainstorm N SQLs ────────────
     async def _brainstorm_sqls(self, question_en: str, n: int = 6):
         prompt = (
-            f"Give {n} distinct SQL queries that could answer the question:\n"
-            f"\"{question_en}\"\nOnly return the SQL, no explanation."
+            f"Give {n} SQL queries answering question:\n"
+            f"\"{question_en}\"\nOnly return SQL, no explanation."
         )
         raw = await asyncio.to_thread(self._llm, prompt)
         sqls = re.findall(r"SELECT .*?;", raw, flags=re.I | re.S)
@@ -213,7 +233,6 @@ class QwenBot:
     async def refine_until_valid(self, question_vi: str, max_loops: int = 5):
         """Try STM ➜ LTM ➜ Vanna/Qwen loops until an executable SQL + answer."""
         question_en = await tr.a_vie_to_en(question_vi)
-        attempted_sql, eval_budget = set(), 30 # Refine duplicated SQLs and setting max budget allowance
         # 0) Cached?
         if (hit := memory.get_stm(question_en)):
             log.info("[STM] hit")
@@ -223,14 +242,13 @@ class QwenBot:
             log.info("[LTM] hit")
             return doc["sql"], doc["rows"], doc["answer"]
         # Stack candidates
+        attempted_sql, eval_budget = set(), 30 # Refine duplicated SQLs and setting max budget allowance
         last_error = ""
         for attempt in range(1, max_loops + 1):
             cand_sqls = []
             # (a) Ask Vanna
-            try:
-                cand_sqls.append(self._vanna_sql(question_en))
-            except Exception as e:
-                log.warning("Vanna failed: %s", e)
+            try: cand_sqls.append(self._vanna_sql(question_en))
+            except Exception as e: log.warning("Vanna failed: %s", e)
             # (b) Brain-storm with Qwen (and optionally feed previous error)
             if last_error:
                 self.chat_history.append(Content(role="model", parts=[Part(text=f"(error): {last_error}")]))
@@ -252,6 +270,8 @@ class QwenBot:
                 if not rows: raise ValueError("0 rows returned")
                 answer = await self._craft_final_answer(question_en, rows)
                 payload = {"sql": best_sql, "rows": rows, "answer": answer}
+                for tbl in await self._schema_reason(best_sql):
+                    add_sql_pair(question_en, best_sql, rows, answer, collection_id=tbl)
                 memory.add_stm(question_en, payload)
                 add_sql_pair(question_en, best_sql, rows, answer)
                 log.info("Solved on attempt %d", attempt)
