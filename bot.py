@@ -209,6 +209,7 @@ class QwenBot:
             return doc["sql"], doc["rows"], doc["answer"]
         # Stack candidates
         last_error = ""
+        attempted_sql, eval_budget = set(), 30   # Refine duplicated SQLs and setting max budget
         for attempt in range(1, max_loops + 1):
             cand_sqls = []
             # (a) Ask Vanna

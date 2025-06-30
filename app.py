@@ -4,6 +4,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from bot import QwenBot
+from translation import a_vie_to_en, a_en_to_vie
 from utils import execute_sql
 
 log = logging.getLogger("cpg-chatbot")
@@ -20,15 +21,17 @@ class Query(BaseModel):
 @app.post("/query")
 async def query(req: Query):
     log.info(f"[App] 📥 Incoming question: {req.question}")
+    en_trans = a_vie_to_en(req.question) # Translate to english (default lang)
     try:
         sql, rows, answer = await bot.refine_until_valid(
-            req.question, max_loops=10
+            en_trans, max_loops=10
         )
         log.info(f"[App] ✅ SQL: {sql}\nTop-rows: {rows[:1]}\nAnswer: {answer}")
+        vi_trans = a_en_to_vie(answer) # Translate to primary lang
         return {
             "sql": sql,
             "rows": rows,
-            "answer": answer
+            "answer": vi_trans
         }
     except Exception as e:
         log.exception("[App] ❌ Failed to answer")

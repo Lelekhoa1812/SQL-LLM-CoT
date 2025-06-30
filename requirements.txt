@@ -2,7 +2,6 @@
 fastapi
 uvicorn[standard]
 gunicorn
-transformers
 google-genai
 python-dotenv   
 python-multipart
@@ -11,11 +10,15 @@ torch
 accelerate
 einops
 cachetools
-gradio_client       # Server can't load Qwen3
+gradio_client       # Server can't load Qwen3, yet use Gemini for API demo
 
 # RAG
-faiss-cpu
+# faiss-cpu         # Lightweight but not efficient
 pymongo
+# qdrant-client
+chromadb            # Switch to qdrant if needed
+transformers
+sentence-transformers
 
 # SQLs
 vanna

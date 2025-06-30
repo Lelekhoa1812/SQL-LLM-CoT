@@ -46,7 +46,8 @@ class GeminiVanna(VannaBase):
              f"### Question\n{question}\n### SQL\n{sql}\n"
              "Respond with a single number.")
         try:
-            score = float(self.submit_prompt(p).split()[0])
+            match = re.search(r"([01](?:\.\d+)?)", self.submit_prompt(p))
+            score = float(match.group(1)) if match else 0.0
         except Exception:
             score = 0.0
         return max(0.0, min(score, 1.0))
@@ -129,6 +130,7 @@ def run_and_score(question: str, sqls: List[str]):
         else best_sql.rstrip(";") + " LIMIT 1000;"
     )
     # Read SQL save records to dict
-    rows = pd.read_sql(sa_text(safe_sql), utils.ENGINE).to_dict(orient="records")
+    # rows = pd.read_sql(sa_text(safe_sql), utils.ENGINE).to_dict(orient="records") 
+    await uasync.async_execute(safe_sql) # Parallel service
     return best_sql, rows
 

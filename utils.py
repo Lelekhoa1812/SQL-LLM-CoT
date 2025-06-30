@@ -1,6 +1,7 @@
 # utils.py
 import functools, logging, os, pandas as pd
 from sqlalchemy import create_engine, inspect, text
+from databases import Database
 
 # Prefixes
 user = os.getenv("DB_USER")
@@ -23,6 +24,10 @@ ENGINE = create_engine(
     pool_recycle=3600,
 )
 
+DATABASE = Database(f"mysql+pymysql://{DB_CFG['user']}:{DB_CFG['password']}@"
+                    f"{DB_CFG['host']}:{DB_CFG['port']}/{DB_CFG['db']}")
+
+
 # ---------- Logging ----------
 log = logging.getLogger("utils-service")
 log.info("🚀 Starting utils...")
@@ -34,11 +39,21 @@ def _cached_query(sql: str) -> list[dict]:
     df = pd.read_sql(text(sql), con=ENGINE)
     return df.to_dict(orient="records")
 
+# Non-parallel execution
 def execute_sql(sql: str) -> list[dict]:
     try:
         return _cached_query(sql)
     except Exception as e:
         log.error("⚠️ SQL failed: %s", e)
+        raise
+
+# Parallel execution
+async def async_execute(sql: str) -> list[dict]:
+    try:
+        rows = await DATABASE.fetch_all(sql)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error("⚠️ async SQL failed: %s", e)
         raise
 
 # ---------- Introspect schema once & cache ----------
