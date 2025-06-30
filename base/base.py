@@ -33,10 +33,9 @@ class VannaBase(ABC):
         vec = self._embed(q).astype("float32")
         self._examples.append({"q": q, "sql": sql, "vec": vec})
         self._index.add(vec[None, :])
-        memory.save({"type": "qa", "q": q, "sql": sql})     # LTM
 
-    def add_ddl(self, ddl: str):           self._ddl.append(ddl);  memory.save({"type":"ddl","ddl":ddl})
-    def add_documentation(self, doc: str): self._docs.append(doc); memory.save({"type":"doc","text":doc})
+    def add_ddl(self, ddl: str):           self._ddl.append(ddl);  
+    def add_documentation(self, doc: str): self._docs.append(doc); 
 
     def similar_qa(self, question: str, k: int = 3) -> List[Dict]:
         if self._index.ntotal == 0:
