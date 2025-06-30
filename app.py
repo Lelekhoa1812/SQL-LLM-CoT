@@ -4,8 +4,9 @@ import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from bot import QwenBot
-from translation import a_vie_to_en, a_en_to_vie
-from utils import execute_sql
+from memory import start_up_create_indexes
+# from translation import a_vie_to_en, a_en_to_vie
+# from utils import execute_sql
 
 log = logging.getLogger("cpg-chatbot")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -14,6 +15,7 @@ log.info("🚀 Root app startup...")
 # Services
 app  = FastAPI()
 bot  = QwenBot()
+start_up_create_indexes() # Create startup collections chunking
 
 class Query(BaseModel):
     question: str

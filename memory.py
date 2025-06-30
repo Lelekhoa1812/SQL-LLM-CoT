@@ -123,3 +123,6 @@ def clear_all():
             db[n].delete_many({})
     log.info("🧹 Cleared STM and Mongo LTM")
 
+def start_up_create_indexes():
+    for tbl in db.list_collection_names():
+        db[tbl].create_index([("norm_sql", ASCENDING)])
