@@ -73,11 +73,18 @@ class RotatingGeminiClient:
 
     # ---------- public proxy ----------------------------------------
     def generate_content(self, *args, **kw):
-        for attempt in range(5):           # rotate up to 5 keys max
+        is_stream = kw.get("stream", False)
+        if "stream" in kw:
+            del kw["stream"]
+        for attempt in range(5):
             try:
-                return self._client.models.generate_content(*args, **kw)
+                if is_stream:
+                    return self._client.models.stream_generate_content(*args, **kw)
+                else:
+                    return self._client.models.generate_content(*args, **kw)
             except Exception as e:
                 if self._should_rotate(e):
+                    log.warning(f"[Retry {attempt+1}/5] Rotating key due to: {e}")
                     self._swap_key()
                     time.sleep(1)          # small delay before retry
                     continue
