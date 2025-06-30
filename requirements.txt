@@ -22,7 +22,7 @@ transformers
 sentence-transformers
 
 # SQLs
-vanna
+# vanna
 sqlalchemy
 pymysql
 db-sqlite3
