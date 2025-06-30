@@ -8,7 +8,7 @@ from base.base import VannaBase  # Custom lightweight Vanna
 from google import genai  
 # Util services
 from llm_ut import retry_with_backoff
-from memory import add_sql_pair, retrieve_sql, get_stm, add_stm
+from memory import add_sql_pair, retrieve_sql, get_table_context, retrieve_sql
 import utils
 from sqlalchemy import text as sa_text
 from rotator import RotatingGeminiClient
@@ -74,10 +74,12 @@ class GeminiVanna(VannaBase):
         try:
             rows = pd.read_sql(sa_text(sql), utils.ENGINE).to_dict(orient="records")
         except Exception as e:
-            log.warning(f"[add_question_sql] SQL execution failed: {e}")
+            log.warning(f"[add_question_sql] SQL failed: {e}")
             rows = []
         super().add_question_sql(q, sql)
-        add_sql_pair(q, sql, rows, "")
+        for tbl in utils.db_schema():
+            if tbl.lower() in sql.lower():
+                add_sql_pair(q, sql, rows, "", collection_id=tbl)
 
 # **Strongly preferable**
 if LLM_BACKEND == "openai":
