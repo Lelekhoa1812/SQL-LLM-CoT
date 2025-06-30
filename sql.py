@@ -3,7 +3,6 @@ import os, logging, re
 from typing import List
 import numpy as np, pandas as pd
 # LLM
-import vanna as vn
 from base.base import VannaBase  # Custom lightweight Vanna
 from google import genai  
 # Util services
