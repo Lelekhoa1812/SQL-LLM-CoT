@@ -130,7 +130,6 @@ def run_and_score(question: str, sqls: List[str]):
         else best_sql.rstrip(";") + " LIMIT 1000;"
     )
     # Read SQL save records to dict
-    # rows = pd.read_sql(sa_text(safe_sql), utils.ENGINE).to_dict(orient="records") 
-    await uasync.async_execute(safe_sql) # Parallel service
+    rows = pd.read_sql(sa_text(safe_sql), utils.ENGINE).to_dict(orient="records")
     return best_sql, rows
 

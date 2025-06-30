@@ -50,10 +50,13 @@ def execute_sql(sql: str) -> list[dict]:
 # Parallel execution
 async def async_execute(sql: str) -> list[dict]:
     try:
-        rows = await DATABASE.fetch_all(sql)
-        return [dict(r) for r in rows]
+        await DATABASE.connect()
+        results = await DATABASE.fetch_all(query=sql)
+        await DATABASE.disconnect()
+        return [dict(row) for row in results]
     except Exception as e:
-        log.error("⚠️ async SQL failed: %s", e)
+        log.error("⚠️ async SQL failed: %s", e, " Attempt backup.")
+        execute_sql(sql)
         raise
 
 # ---------- Introspect schema once & cache ----------

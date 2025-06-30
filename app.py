@@ -21,17 +21,15 @@ class Query(BaseModel):
 @app.post("/query")
 async def query(req: Query):
     log.info(f"[App] 📥 Incoming question: {req.question}")
-    en_trans = a_vie_to_en(req.question) # Translate to english (default lang)
     try:
         sql, rows, answer = await bot.refine_until_valid(
-            en_trans, max_loops=10
+            req.question, max_loops=10
         )
         log.info(f"[App] ✅ SQL: {sql}\nTop-rows: {rows[:1]}\nAnswer: {answer}")
-        vi_trans = a_en_to_vie(answer) # Translate to primary lang
         return {
             "sql": sql,
             "rows": rows,
-            "answer": vi_trans
+            "answer": answer
         }
     except Exception as e:
         log.exception("[App] ❌ Failed to answer")

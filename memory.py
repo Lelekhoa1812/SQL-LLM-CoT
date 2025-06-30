@@ -1,5 +1,5 @@
 # memory.py
-import os, json, time, logging, pathlib
+import os, json, time, logging, pathlib, re
 
 # DBs
 from cachetools import LRUCache
@@ -29,95 +29,81 @@ MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("MONGO_DB_NAME", "cpg_ltm") # Fallback name
 mongo = MongoClient(MONGO_URI)
 db = mongo[DB_NAME]
-ltm_coll = db["long_term_memory"]
 
-# Vector embedding model loader
-chroma_client = Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory=".chromadb"))
-chroma_collection = chroma_client.get_or_create_collection("ltm")
-sql_collection = chroma_client.get_or_create_collection("sql_chunks")
-meta_collection = chroma_client.get_or_create_collection("table_meta")
+# Vector embedding model loader and chroma
 EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+CHROMA_DIR = os.getenv("CHROMA_DIR", ".chromadb")
+chroma_client = Client(
+    Settings(
+        chroma_db_impl="duckdb+parquet",
+        persist_directory=CHROMA_DIR,
+        anonymized_telemetry=False
+    )
+)
+chroma_collection = chroma_client.get_or_create_collection("ltm")
+SQL_COL  = chroma_client.get_or_create_collection("sql_pairs")
+META_COL = chroma_client.get_or_create_collection("table_meta")
 
-def _embed(text: str) -> np.ndarray:
-    return EMBED_MODEL.encode(text, normalize_embeddings=True)
+def _uuid():            # tiny helper
+    import uuid; return str(uuid.uuid4())
 
-import uuid
-def add_ltm_entry(entry_type: str, question: str, sql: str = "", answer: str = "", rows: list = []):
-    payload = {"question": question, "sql": sql, "rows": rows, "answer": answer}
-    emb = EMBED_MODEL.encode([question])[0].tolist()
-    collection = sql_collection if entry_type == "sql" else meta_collection
-    collection.add(
+def _embed(txt: str):   # returns list[float]
+    return EMBED_MODEL.encode([txt], normalize_embeddings=True)[0].tolist()
+
+# ------------ PUBLIC API -------------------------------------------------
+
+def add_sql_pair(question: str, sql: str, rows: list, answer: str):
+    """
+    • Dedup on *SQL text* (case/space-insensitive)  
+    • If already present -> merge rows & keep best answer length>0
+    """
+    norm = re.sub(r"\s+", " ", sql.lower().strip())
+    existing = SQL_COL.query(
+        query_texts=[norm], n_results=1, include=["documents", "metadatas"]
+    )
+    if existing["metadatas"] and existing["metadatas"][0]:
+        doc_id  = existing["ids"][0][0]
+        meta    = existing["metadatas"][0][0]
+        merged  = {
+            "question": question,
+            "sql": sql,
+            "rows": (meta["rows"] + rows)[:2_000],   # cap
+            "answer": answer or meta.get("answer", "")
+        }
+        SQL_COL.update(ids=[doc_id], metadatas=[merged])
+        return
+
+    SQL_COL.add(
+        ids=[_uuid()],
         documents=[answer],
-        metadatas=[payload],
-        embeddings=[emb],
-        ids=[str(uuid.uuid4())]
+        embeddings=[_embed(question)],
+        metadatas=[{
+            "question": question, "sql": sql,
+            "rows": rows, "answer": answer
+        }]
     )
 
-
-def retrieve_ltm(question: str, top_k: int = 3) -> list[dict]:
-    query_emb = EMBED_MODEL.encode([question])[0].tolist()
-    # load all entries (for large scale, switch to MongoDB vector index)
-    results = chroma_collection.query(
-        query_embeddings=[query_emb],
-        n_results=top_k,
-        include=["documents", "metadatas"]
+def add_table_meta(tbl_name: str, doc: str):
+    META_COL.add(
+        ids=[_uuid()],
+        documents=[doc],
+        embeddings=[_embed(tbl_name)],
+        metadatas=[{"table": tbl_name}]
     )
-    # assumes documents hold answer/json payload
-    return results["metadatas"][0]
 
-## **Services**
-def save(entry: dict):
-    """
-    Saves a memory entry to MongoDB LTM.
-    Entry must contain a 'type' key, e.g. 'ddl', 'doc', or 'qa'.
-    """
-    if "type" not in entry:
-        raise ValueError("Missing 'type' in memory entry")
-    entry["ts"] = time.time()
-    ltm_coll.insert_one(entry)
-    log.info("[LTM] Saved entry of type `%s`", entry["type"])
+def retrieve_sql(question: str, k: int = 3) -> list[dict]:
+    res = SQL_COL.query(
+        query_embeddings=[_embed(question)],
+        n_results=k,
+        include=["metadatas"]
+    )
+    return res["metadatas"][0] if res["metadatas"] else []
 
 
-def get_by_type(mem_type: str) -> list[dict]:
-    return list(ltm_coll.find({"type": mem_type}))
-
-def all() -> list[dict]:
-    return list(ltm_coll.find())
-
-def remove_by_hash(doc_id: str) -> bool:
-    result = ltm_coll.delete_one({"_id": doc_id})
-    return result.deleted_count > 0
-
+# ------------ SERVICES --------------------------------------------------
 def clear_all():
     STM.clear()
-    ltm_coll.delete_many({})
-    log.info("[MEMORY] All STM and LTM cleared.")
+    SQL_COL.delete(where={})
+    META_COL.delete(where={})
+    log.info("[MEMORY] All STM and LTM cleared 🧹.")
 
-def add_ltm_entry_dedup(question: str, sql: str, answer: str, rows: list):
-    query_emb = EMBED_MODEL.encode([question])[0].tolist()
-    result = sql_collection.query(query_embeddings=[query_emb], n_results=1, include=["metadatas"])
-
-    # If existing similar SQL is found
-    if result["metadatas"] and result["metadatas"][0]:
-        existing = result["metadatas"][0][0]
-        if sql.strip() == existing.get("sql", "").strip():
-            # Optionally merge rows
-            merged_rows = existing.get("rows", []) + rows
-            merged_answer = answer or existing.get("answer", "")
-            sql_collection.update(
-                ids=[result["ids"][0][0]],
-                metadatas=[{
-                    "question": question,
-                    "sql": sql,
-                    "rows": merged_rows,
-                    "answer": merged_answer,
-                }]
-            )
-            return
-    # Else add new
-    sql_collection.add(
-        documents=[answer],
-        metadatas=[{"question": question, "sql": sql, "rows": rows, "answer": answer}],
-        embeddings=[query_emb],
-        ids=[str(uuid.uuid4())]
-    )
