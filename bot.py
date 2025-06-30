@@ -120,11 +120,11 @@ class QwenBot:
         attempted_sql, eval_budget = set(), 30 # Refine duplicated SQLs and setting max budget allowance
         log.info("[Cold Start] started")
         # ───── Step 1: Load existing memory into STM/chat_history ─────
-        for doc in retrieve_sql("", k=50):
+        for doc in retrieve_sql("", k=30):
             q, sql, a = doc["question"], doc["sql"], doc["answer"]
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": a})
             self.chat_history.append(Content(role="model", parts=[Part(text=f"(Q): {q} (A): {a}")]))
-        log.info("✅ Loaded %d memory entries into STM and chat_history", len(doc))
+        log.info("✅ Loaded %d memory entries into STM and chat_history")
         # ───── Step 2: Generate schema summary ─────
         schema = db_schema()
         schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
