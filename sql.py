@@ -25,7 +25,7 @@ MODEL = "gemini-2.5-flash-preview-04-17"
 class GeminiVanna(VannaBase):
     def __init__(self):
         super().__init__() 
-        self.client = RotatingGeminiClient
+        self.client = RotatingGeminiClient()
         self.dialect = "mysql"
         schema = utils.db_schema() # preload DDL from schema so get_sql_prompt() has context
         for t, cols in schema.items():
@@ -34,10 +34,16 @@ class GeminiVanna(VannaBase):
 
     @retry_with_backoff(retries=4, delay=1.5)
     def submit_prompt(self, prompt, **kwargs) -> str:
-        """`prompt` is plain text built by get_sql_prompt()."""
         content = "\n".join(p["content"] for p in prompt) if isinstance(prompt, list) else str(prompt)
-        resp = self.client.generate_content(model=self.model, contents=[{"role": "user", "parts": [{"text": content}]}])
+        resp = self.client.generate_content(
+            model=self.model,
+            contents=[{"role": "user", "parts": [{"text": content}]}],
+            **kwargs
+        )
+        if hasattr(resp, "__iter__"):  # streamed
+            return "".join([c.text for c in resp if hasattr(c, "text")]).strip()
         return resp.text.strip()
+
 
     # helper used by vanna-core for scoring:
     def score_sql(self, question: str, sql: str) -> float:

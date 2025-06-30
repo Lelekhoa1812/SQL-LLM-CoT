@@ -57,8 +57,9 @@ class QwenBot:
                 contents=contents,
                 stream=True
             )
-            self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {prompt} - (answer) {rsp.text}")]))
-            return _clean_md(rsp.text)
+            final_rsp = "".join([chunk.text for chunk in rsp if hasattr(chunk, "text")])
+            self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {prompt} - (answer) {final_rsp}")]))
+            return _clean_md(final_rsp)
         except Exception as e:
             log.error(f"[Gemini] memory LLM failed: {e}")
             raise
@@ -72,7 +73,8 @@ class QwenBot:
                 contents=[Content(role="user", parts=[Part(text=prompt)])],
                 stream=True
             )
-            return _clean_md(rsp.text)
+            final_rsp = "".join([chunk.text for chunk in rsp if hasattr(chunk, "text")])
+            return _clean_md(final_rsp)
         except Exception as e:
             log.error(f"[Gemini] no-mem LLM failed: {e}")
             raise
@@ -81,6 +83,7 @@ class QwenBot:
         self.chat_history = []
         logging.info("🧼 Cleared chat_history")
 
+    @staticmethod
     def _parse_cot_fallback(text: str) -> list[dict]:
         questions = re.findall(r"(?i)question:\s*(.+?)(?:\n|$)", text)
         sqls = re.findall(r"```sql\s*(.*?)```|(?:SELECT[\s\S]+?;)", text, flags=re.I)
@@ -136,7 +139,7 @@ class QwenBot:
         attempted_sql, eval_budget = set(), 30 # Refine duplicated SQLs and setting max budget allowance
         log.info("[Cold Start] started")
         # ───── Step 1: Load existing memory into STM/chat_history ─────
-        for doc in retrieve_sql("", k=30):
+        async for doc in retrieve_sql("", k=30):
             q, sql, a = doc["question"], doc["sql"], doc["answer"]
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": a})
             self.chat_history.append(Content(role="model", parts=[Part(text=f"(Q): {q} (A): {a}")]))
