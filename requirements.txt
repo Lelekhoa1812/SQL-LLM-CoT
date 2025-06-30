@@ -17,12 +17,12 @@ faiss-cpu           # Lightweight but not efficient
 pymongo 
 databases[aiomysql]
 # qdrant-client
-chromadb            # Switch to qdrant if needed
+# chromadb          # Switch to qdrant if needed
 transformers
 sentence-transformers
 
-# SQLs
-# vanna
+# SQLs 
+# vanna             # Use customized modules             
 sqlalchemy
 pymysql
 db-sqlite3
