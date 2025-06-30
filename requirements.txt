@@ -2,15 +2,17 @@
 fastapi
 uvicorn[standard]
 gunicorn
-google-genai
 python-dotenv   
 python-multipart
-sentence-transformers
 torch
 accelerate
 einops
 cachetools
-gradio_client       # Server can't load Qwen3, yet use Gemini for API demo
+
+# LLM
+google-genai
+google-api-core
+#gradio_client      # Server can't load Qwen3, yet use Gemini for API demo
 
 # RAG
 faiss-cpu           # Lightweight but not efficient
