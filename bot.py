@@ -273,7 +273,7 @@ class QwenBot:
             if last_error:
                 self.chat_history.append(Content(role="model", parts=[Part(text=f"(error): {last_error}")]))
             cand_sqls += await self._brainstorm_sqls(question_en)
-            # --- dedup & already-tried filter
+            # (c) Dedup and track
             dedup = []
             for s in cand_sqls:
                 norm = re.sub(r"\s+", " ", s.lower().strip())
@@ -284,11 +284,30 @@ class QwenBot:
             eval_budget -= len(cand_sqls)
             if not cand_sqls or eval_budget <= 0:
                 break
-            # (c) Pick best by Vanna scorer + verify
+            # Log Vanna confidence scores for debugging
+            for sql in cand_sqls:
+                try:
+                    score = vanna.score_sql(question_en, sql)
+                    log.debug(f"[VannaScore] SQL: {sql[:50]}... → Score: {score:.4f}")
+                except Exception as e:
+                    log.debug(f"[VannaScore] Failed to score SQL: {e}")
+             # (e) Try best via run_and_score
             try:
                 best_sql, rows = await run_and_score(question_en, cand_sqls)
                 if not rows: raise ValueError("0 rows returned")
-                answer = await self._craft_final_answer(question_en, rows)
+                # (f) Final answer generation with context-aware prompt
+                tables = await self._schema_reason(best_sql)
+                table_summaries = "\n".join(get_table_context(t) for t in tables)
+                sample_rows = str(rows[:8])
+                answer_prompt = (
+                    f"Q: {question_en}\n"
+                    f"Relevant Tables: {', '.join(tables)}\n"
+                    f"Table Context:\n{table_summaries}\n"
+                    f"Sample rows:\n{sample_rows}\n\n"
+                    "Write a short and factual insight answer."
+                )
+                answer_en = await asyncio.to_thread(self._llm_no_mem, answer_prompt)
+                answer = await self._craft_final_answer(answer_en, rows)
                 payload = {"sql": best_sql, "rows": rows, "answer": answer}
                 for tbl in await self._schema_reason(best_sql):
                     add_sql_pair(question_en, best_sql, rows, answer, collection_id=tbl)
@@ -303,11 +322,11 @@ class QwenBot:
         raise RuntimeError("❌ Could not obtain a valid SQL after many tries.")
 
     # ──────────── Compose short natural-language answer ────────────
-    async def _craft_final_answer(self, question_en: str, rows):
+    async def _craft_final_answer(self, answer_en: str, rows):
         sample = str(rows[:8])
         prompt = (
-            f"Q: {question_en}\n"
+            f"Answer: {answer_en}\n"
             f"Rows sample: {sample}\n\n"
-            "Give a concise factual answer (one sentence)."
+            "Validate SQL response from sample and give a concise factual answer (one sentence)."
         )
         return await asyncio.to_thread(self._llm_no_mem, prompt)
