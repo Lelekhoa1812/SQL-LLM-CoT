@@ -27,7 +27,7 @@ sqlalchemy
 pymysql
 db-sqlite3
 pandas
-plotly
+# plotly
 python-abc
 tenacity
 clickhouse-connect
