@@ -1,4 +1,4 @@
-# gemini_rotator.py
+# rotator.py
 import os, logging, itertools, threading, time
 from google import genai
 from google.api_core import exceptions as gexc

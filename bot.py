@@ -51,7 +51,7 @@ class QwenBot:
             Content(role="user", parts=[Part(text=prompt)])
         ]
         try:
-            rsp = genai_client.models.generate_content(
+            rsp = genai_client.generate_content(
                 model=GEMINI_MODEL,
                 contents=contents
             )
@@ -65,7 +65,7 @@ class QwenBot:
     def _llm_no_mem(self, prompt: str) -> str:
         """Stateless one-shot call"""
         try:
-            rsp = genai_client.models.generate_content(
+            rsp = genai_client.generate_content(
                 model=GEMINI_MODEL,
                 contents=[Content(role="user", parts=[Part(text=prompt)])]
             )
@@ -244,7 +244,7 @@ class QwenBot:
         if (hit := memory.get_stm(question_en)):
             log.info("[STM] hit")
             return hit["sql"], hit["rows"], hit["answer"]
-        if (ltm := retrieve_sql(question_en, 1)):
+        if (ltm := retrieve_sql(question_en, k=1)):
             doc = ltm[0]; memory.add_stm(question_en, doc)
             log.info("[LTM] hit")
             return doc["sql"], doc["rows"], doc["answer"]
