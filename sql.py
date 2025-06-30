@@ -20,7 +20,6 @@ log.info("🚀 Bootstrapping Vanna…")
 # 1️. Pick the backend core LLM model
 # ────────────────────────────────────────────────
 LLM_BACKEND = os.getenv("VN_BACKEND", "gemini").lower() # gemini prefix as default
-GEMINI_KEY = os.getenv("GEMINI_FLASH_API_KEY")
 MODEL = "gemini-2.5-flash-preview-04-17"
 
 ## **WRAPPER**
