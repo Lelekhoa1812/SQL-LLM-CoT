@@ -15,7 +15,7 @@ class GeminiModelWrapper:
 
     def count_tokens(self, *args, **kwargs):
         return self.parent.count_tokens(*args, **kwargs)
-    
+
 class RotatingGeminiClient:
     """
     Wraps google.generativeai Client with automatic key-rotation.
@@ -38,6 +38,7 @@ class RotatingGeminiClient:
     @property
     def models(self):
         return GeminiModelWrapper(self)
+
     
     # ---------- internal helpers ------------------------------------
     def _swap_key(self):
