@@ -5,6 +5,17 @@ from google.api_core import exceptions as gexc
 
 log = logging.getLogger("gemini-rotator")
 
+# This is a safe wrapper
+class GeminiModelWrapper:
+    def __init__(self, parent):
+        self.parent = parent
+
+    def generate_content(self, *args, **kwargs):
+        return self.parent.generate_content(*args, **kwargs)
+
+    def count_tokens(self, *args, **kwargs):
+        return self.parent.count_tokens(*args, **kwargs)
+    
 class RotatingGeminiClient:
     """
     Wraps google.generativeai Client with automatic key-rotation.
@@ -26,7 +37,7 @@ class RotatingGeminiClient:
 
     @property
     def models(self):
-        return self._client.models
+        return GeminiModelWrapper(self)
     
     # ---------- internal helpers ------------------------------------
     def _swap_key(self):
