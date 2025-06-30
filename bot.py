@@ -135,47 +135,54 @@ class QwenBot:
             save_table_context(t, tbl_ctx)
         self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
         log.info(f"🧠 Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{summary}")
-        # ───── Step 3: CoT-based self-play QA generation ─────
-        for i in range(1, rounds + 1):
-            log.info(f"[ColdStart-Round {i}] Generating CoT QA pairs…")
+        # ───── Step 3: CoT-based table-wise self-play QA generation ─────
+        schema = db_schema()
+        tables = list(schema.keys())
+        attempted_sql, eval_budget = set(), 300  # increase total budget
+        # Gen QA for each table
+        for t_idx, tbl in enumerate(tables):
+            if t_idx >= 10: break  # limit max tables processed during cold-start
+            colnames = schema[tbl]
+            colstr = ", ".join(colnames)
+            log.info(f"[ColdStart] Generating QA for table: {tbl}")
+            # Generic prompt
             cot_prompt = (
-                "Generate 5 realistic business questions about sales data, covering trends, regions, products, customers.\n"
-                "Return ONLY a JSON array with exact structure:\n"
-                "[{\"question\": \"...\", \"sql\": \"SELECT ...;\"}, ...]\n"
-                "Use MySQL. Each SQL must end with a semicolon."
+                f"The table `{tbl}` has the columns: {colstr}.\n"
+                f"Generate 10 realistic business questions about this table ONLY.\n"
+                f"Return ONLY a JSON array with this structure:\n"
+                f"[{{\"question\": \"...\", \"sql\": \"SELECT ... FROM {tbl} WHERE ...;\"}}, ...]\n"
+                f"Each SQL must target `{tbl}` and end with a semicolon. Use MySQL syntax."
             )
             try:
                 cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
                 try:
-                    qa_pairs = json.loads(cot_raw)
+                    qa_pairs = json.loads(_clean_md(cot_raw))
                 except Exception:
-                    log.warning(f"[COT-{i}] Invalid JSON returned, attempting regex fallback")
+                    log.warning(f"[{tbl}] Invalid JSON returned, attempting regex fallback")
                     qa_pairs = self._parse_cot_fallback(cot_raw)
-                log.info(f"CoT-{i}: Parsed {len(qa_pairs)} question–SQL candidates")
+                log.info(f"[{tbl}] Parsed {len(qa_pairs)} question–SQL candidates")
             except Exception as e:
-                log.error(f"[COT-{i}] Failed to generate questions: {e}")
+                log.error(f"[{tbl}] Failed to generate questions: {e}")
                 continue
-            # CoT loops
+            # Grouping QA to pairs
             for pair in qa_pairs:
                 q = pair.get("question", "").strip()
                 raw_sql = pair.get("sql", "").strip()
-                if not q or not raw_sql:
+                if not q or not raw_sql or tbl.lower() not in raw_sql.lower():
                     continue
                 try:
-                    # ───── Step 3.1: Refine via Vanna ─────
-                    few_shots = vanna.similar_qa(q)
+                    # Step 3.1: Refine SQLs
+                    few_shots = vanna.similar_qa(q, k=3)
                     prompt = vanna.get_sql_prompt(question=q, shots=few_shots)
-                    # Ask bot agent to generate N variations 3-5 per prompt
                     sql_candidates = []
                     for _ in range(3):
                         raw = vanna.submit_prompt(prompt)
                         sql = vanna.extract_sql(raw)
-                        if sql and sql.lower().startswith("select"):
+                        if sql and tbl.lower() in sql.lower():
                             sql_candidates.append(sql)
-                    # Optional: add the bot Gemini version if valid
-                    if raw_sql.lower().startswith("select"):
+                    if raw_sql.lower().startswith("select") and tbl.lower() in raw_sql.lower():
                         sql_candidates.append(raw_sql)
-                    # --- dedup & already-tried filter
+                    # Rm duplicated SQLs
                     dedup = []
                     for s in sql_candidates:
                         norm = re.sub(r"\s+", " ", s.lower().strip())
@@ -186,25 +193,25 @@ class QwenBot:
                     eval_budget -= len(sql_candidates)
                     if not sql_candidates or eval_budget <= 0:
                         break
-                    # ───── Step 3.2: Score + execute ─────
+                    # Step 3.2: Score + execute
                     best_sql, rows = await run_and_score(q, sql_candidates)
                     if not rows:
                         raise ValueError("Query returned 0 rows")
-                    # ───── Step 3.3: Reason with Qwen ─────
-                    reasoning_prompt = (
-                        f"Q: {q}\nSample result:\n{str(rows[:5])}\n"
+                    # Step 3.3: Reasoning insight
+                    rationale_prompt = (
+                        f"Q: {q}\nSample result from `{tbl}`:\n{str(rows[:5])}\n"
                         "What insight can you infer from this result?"
                     )
-                    rationale = await asyncio.to_thread(self._llm, reasoning_prompt)
-                    # ───── Step 3.4: Persist only valid results ─────
+                    rationale = await asyncio.to_thread(self._llm, rationale_prompt)
+                    # Step 3.4: Persist
                     payload = {"sql": best_sql, "rows": rows, "answer": rationale}
                     memory.add_stm(q, payload)
-                    add_sql_pair(q, best_sql, rows, rationale)
+                    add_sql_pair(q, best_sql, rows, rationale, collection_id=tbl)
                     self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer): {rationale}")]))
-                    log.info(f"✅ [COT-{i}] Stored: {q[:60]}")
+                    log.info(f"✅ [{tbl}] Stored: {q[:60]}")
                 except Exception as e:
-                    log.warning(f"❌ [COT-{i}] Failed to process Q: {q[:40]} — {e}")
-        log.info(f"[Cold Start] completed: {rounds} CoT rounds finished")
+                    log.warning(f"❌ [{tbl}] Failed to process Q: {q[:40]} — {e}")
+
 
     # ──────────── Helper: ask Gemini-Vanna for 1 SQL ────────────
     @retry_with_backoff(retries=3, delay=1.5)
