@@ -44,7 +44,6 @@ class GeminiVanna(VannaBase):
             return "".join([c.text for c in resp if hasattr(c, "text")]).strip()
         return resp.text.strip()
 
-
     # helper used by vanna-core for scoring:
     def score_sql(self, question: str, sql: str) -> float:
         p = (f"Score from 0-1 how well the SQL answers the question.\n"
