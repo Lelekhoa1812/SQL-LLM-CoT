@@ -58,7 +58,7 @@ class GeminiVanna(VannaBase):
         """
         Retrieve top-k similar (question, SQL) pairs from LTM via memory vector search.
         """
-        docs = retrieve_sql(q, top_k=k) or super().similar_qa(q, k)
+        docs = retrieve_sql(q, k=k) or super().similar_qa(q, k)
         return [
             {"question": d.get("question", ""), "sql": d.get("sql", "")}
             for d in docs if "question" in d and "sql" in d
