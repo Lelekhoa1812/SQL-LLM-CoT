@@ -8,6 +8,7 @@ from memory import (
     add_sql_pair, retrieve_sql,
     save_table_context, get_table_context
 )
+import difflib
 from google import genai   
 from google.genai.types import Content, Part
 from llm_ut  import retry_with_backoff 
@@ -53,7 +54,8 @@ class QwenBot:
         try:
             rsp = genai_client.generate_content(
                 model=GEMINI_MODEL,
-                contents=contents
+                contents=contents,
+                stream=True
             )
             self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {prompt} - (answer) {rsp.text}")]))
             return _clean_md(rsp.text)
@@ -67,7 +69,8 @@ class QwenBot:
         try:
             rsp = genai_client.generate_content(
                 model=GEMINI_MODEL,
-                contents=[Content(role="user", parts=[Part(text=prompt)])]
+                contents=[Content(role="user", parts=[Part(text=prompt)])],
+                stream=True
             )
             return _clean_md(rsp.text)
         except Exception as e:
@@ -84,6 +87,9 @@ class QwenBot:
         clean_sqls = [s if isinstance(s, str) else s[0] for s in sqls]
         return [{"question": q.strip(), "sql": s.strip()} for q, s in zip(questions, clean_sqls)]
     
+    def is_similar_sql(new_sql, existing_list):
+        return any(difflib.SequenceMatcher(None, new_sql, old).ratio() > 0.97 for old in existing_list)
+
     async def _schema_reason(self, text: str) -> list[str]:
         """
         Ask Gemini which table(s) the text relates to.
@@ -144,6 +150,7 @@ class QwenBot:
             tbl_ctx = await asyncio.to_thread(self._llm, f"What is the table '{t}' about?\n{t}({', '.join(c)})")
             save_table_context(t, tbl_ctx)
         self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
+        self.chat_history.insert(0, Content(role="model", parts=[Part(text=f"Schema overview:\n{schema_txt}")]))
         log.info(f"🧠 Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{summary}")
         # ───── Step 3: CoT-based table-wise self-play QA generation ─────
         schema = db_schema()
@@ -196,7 +203,7 @@ class QwenBot:
                     dedup = []
                     for s in sql_candidates:
                         norm = re.sub(r"\s+", " ", s.lower().strip())
-                        if norm not in attempted_sql:
+                        if norm not in attempted_sql and not self.is_similar_sql(norm, attempted_sql):
                             attempted_sql.add(norm)
                             dedup.append(s)
                     sql_candidates = dedup[: min(10, eval_budget)]
@@ -227,7 +234,11 @@ class QwenBot:
     @retry_with_backoff(retries=3, delay=1.5)
     def _vanna_sql(self, question_en: str) -> str:
         few_shots = vanna.similar_qa(question_en, k=3)
-        prompt = vanna.get_sql_prompt(question=question_en, shots=few_shots)
+        prompt = (
+            "Think step-by-step to understand the user's goal.\n"
+            "Then write a safe, relevant SQL query.\n\n"
+            + vanna.get_sql_prompt(question=question_en, shots=few_shots)
+        )
         raw    = vanna.submit_prompt(prompt)
         sql    = vanna.extract_sql(raw)
         vanna.add_question_sql(question_en, sql)
@@ -277,7 +288,7 @@ class QwenBot:
             dedup = []
             for s in cand_sqls:
                 norm = re.sub(r"\s+", " ", s.lower().strip())
-                if norm not in attempted_sql:
+                if norm not in attempted_sql and not self.is_similar_sql(norm, attempted_sql):
                     attempted_sql.add(norm)
                     dedup.append(s)
             cand_sqls = dedup[: min(10, eval_budget)]
