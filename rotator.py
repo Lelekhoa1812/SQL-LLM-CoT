@@ -24,6 +24,10 @@ class RotatingGeminiClient:
         self._cycle = itertools.cycle(keys)
         self._client = genai.Client(api_key=next(self._cycle))
 
+    @property
+    def models(self):
+        return self._client.models
+    
     # ---------- internal helpers ------------------------------------
     def _swap_key(self):
         with self._lock:
