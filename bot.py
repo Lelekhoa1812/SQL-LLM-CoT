@@ -54,8 +54,8 @@ class QwenBot:
         try:
             rsp = genai_client.generate_content(
                 model=GEMINI_MODEL,
-                contents=contents,
-                stream=True
+                contents=contents
+                ,stream=True
             )
             final_rsp = "".join([chunk.text for chunk in rsp if hasattr(chunk, "text")])
             self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {prompt} - (answer) {final_rsp}")]))
@@ -70,8 +70,8 @@ class QwenBot:
         try:
             rsp = genai_client.generate_content(
                 model=GEMINI_MODEL,
-                contents=[Content(role="user", parts=[Part(text=prompt)])],
-                stream=True
+                contents=[Content(role="user", parts=[Part(text=prompt)])]
+                ,stream=True
             )
             final_rsp = "".join([chunk.text for chunk in rsp if hasattr(chunk, "text")])
             return _clean_md(final_rsp)
