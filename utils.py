@@ -49,10 +49,16 @@ def execute_sql(sql: str) -> list[dict]:
 
 # Parallel execution
 async def async_execute(sql: str) -> list[dict]:
+    """
+    Primary RAG utils and SQL executtion.
+    1. non-blocking execution through databases/asyncpg or aiomysql
+    2. automatic reconnect & fall-back to the sync LRU cache
+    """
     try:
-        await DATABASE.connect()
+        if not DATABASE.is_connected:
+            await DATABASE.connect()
         results = await DATABASE.fetch_all(query=sql)
-        await DATABASE.disconnect()
+        # await DATABASE.disconnect()
         return [dict(row) for row in results]
     except Exception as e:
         log.error("⚠️ [UTILS] async SQL failed: %s", e, " Attempt backup.")

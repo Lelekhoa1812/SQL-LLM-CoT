@@ -124,6 +124,10 @@ async def run_and_score(question: str, sqls: List[str]):
     • return (best_sql, rows)
     """
     if not sqls: raise ValueError("No candidate SQL provided")
+    if isinstance(sqls, str):
+        sqls = [sqls]
+    if not sqls:
+        raise ValueError("No candidate SQL provided")
     rated = [(vanna.score_sql(question, s), s) for s in sqls]
     rated.sort(reverse=True)
     best_score, best_sql = rated[0]
