@@ -15,7 +15,7 @@ class GeminiModelWrapper:
         is_stream = kw.pop("stream", False)
         for attempt in range(5):
             try:
-                model = genai.Client(model_name, client=self.parent._client)
+                model = genai.GenerativeModel(model_name, client=self.parent._client)
                 if is_stream:
                     return model.generate_content(*args, stream=True, **kw)
                 else:
@@ -28,7 +28,6 @@ class GeminiModelWrapper:
                     continue
                 raise
 
-
     def count_tokens(self, *args, **kwargs):
         return self.parent.count_tokens(*args, **kwargs)
 
@@ -40,7 +39,6 @@ class RotatingGeminiClient:
       like you would on a normal client.
     """
     def __init__(self, env_prefix: str = "GEMINI_FLASH_API_KEY"):
-        # collect GEMINI_FLASH_API_KEY_1 … _N  (or single key without suffix)
         keys = [
             val for name, val in os.environ.items()
             if name.startswith(env_prefix) and val
@@ -77,7 +75,7 @@ class RotatingGeminiClient:
         is_stream = kw.pop("stream", False)
         for attempt in range(5):
             try:
-                model = genai.Client(model_name, client=self._client)
+                model = genai.GenerativeModel(model_name, client=self._client)
                 if is_stream:
                     return model.generate_content(*args, stream=True, **kw)
                 else:
