@@ -123,7 +123,8 @@ class QwenBot:
         except Exception:
             # fallback: dumb regex
             return [t for t in candidate_tables if t.lower() in text.lower()]
-        
+    
+    @retry_with_backoff(retries=3, delay=1)
     async def _generate_schema_summary(self) -> str:
         schema = db_schema()
         tables = list(schema.keys())
@@ -143,10 +144,13 @@ class QwenBot:
             )
             try:
                 res = await asyncio.to_thread(self._llm, prompt)
-                summary_chunks.append(res)
+                cleaned = _clean_md(res)
+                if not cleaned or len(cleaned) < 20:
+                    raise ValueError("Empty or invalid summary")
+                summary_chunks.append(cleaned)
                 # Save per-chunk table vector summarization content
-                save_table_context(t, res)
-                log.info(f"[SCHEMA] ✅ Added per-table collection \n __COLLECTION_SUMMARY__ \n{res}")
+                save_table_context(t, cleaned)
+                log.info(f"[SCHEMA] ✅ Added per-table collection \n __COLLECTION_SUMMARY__ \n{cleaned}")
             except Exception as e:
                 log.warning(f"[SCHEMA] ❌ Failed for `{t}`: {e}")
         # Assemble final full schema summary
