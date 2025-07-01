@@ -78,6 +78,30 @@ class QwenBot:
         except Exception as e:
             log.error(f"[Gemini] no-mem LLM failed: {e}")
             raise
+    
+    @retry_with_backoff(retries=4, delay=1.5)
+    def _llm_schema(self, prompt: str) -> str:
+        """Use Gemini in non-streaming mode for schema summaries."""
+        contents = [
+            Content(role="model", parts=[Part(text=SYSTEM_PROMPT)]),
+            Content(role="user", parts=[Part(text=prompt)])
+        ]
+        try:
+            rsp = genai_client.generate_content(
+                model=GEMINI_MODEL,
+                contents=contents,
+                # ,stream=True
+            )
+            # Gemini (non-stream) returns .text directly on rsp
+            final_rsp = getattr(rsp, "text", "").strip()
+            if not final_rsp:
+                log.warning("[Gemini-Schema] Empty response from Gemini.")
+                raise ValueError("LLM returned empty schema summary.")
+            return _clean_md(final_rsp)
+        except Exception as e:
+            log.error(f"[Gemini-Schema] Failed to generate schema summary: {e}")
+            raise
+
 
     def reset_history(self):
         self.chat_history = []
@@ -124,7 +148,7 @@ class QwenBot:
             # fallback: dumb regex
             return [t for t in candidate_tables if t.lower() in text.lower()]
     
-    @retry_with_backoff(retries=3, delay=1)
+    @retry_with_backoff(retries=2, delay=1)
     async def _generate_schema_summary(self) -> str:
         schema = db_schema()
         tables = list(schema.keys())
@@ -143,7 +167,7 @@ class QwenBot:
                 "{\"table\": \"...\", \"description\": \"...\", \"example_questions\": [\"...\", \"...\"]}"
             )
             try:
-                res = await asyncio.to_thread(self._llm, prompt)
+                res = await asyncio.to_thread(self._llm_schema, prompt)
                 log.info(f"[SCHEMA] ?? \n __COLLECTION_RAW__ \n{res}")
                 cleaned = json.loads(_clean_md(res))
                 assert isinstance(cleaned, dict) and "description" in cleaned
