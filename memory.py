@@ -61,21 +61,25 @@ def add_sql_pair(
         coll_name = "unknown"
     # Get collection name
     col = _get_collection(coll_name)
+    # Merge on identical norm_sql
+    norm = _norm_sql(sql)
+    existing = col.find_one({"norm_sql": norm}):
+    if existing:
+        log.info(f"[LTM] Skipped duplicate SQL in `{coll_name}`: {sql[:80]}")
+        merged = {**existing, **doc}
+        col.update_one({"_id": existing["_id"]}, {"$set": merged})
+        return
+    # Insert new doc
     doc = {
         "question"  : question,
         "sql"       : sql,
-        "norm_sql"  : _norm_sql(sql),
+        "norm_sql"  : norm,
         "embedding" : _embed(question),
         "rows"      : rows[:2_000],
         "answer"    : answer
     }
-    # Merge on identical norm_sql
-    existing = col.find_one({"norm_sql": doc["norm_sql"]})
-    if existing:
-        merged = {**existing, **doc}
-        col.update_one({"_id": existing["_id"]}, {"$set": merged})
-        return
     col.insert_one(doc)
+    log.info(f"[LTM] ✅ Inserted new pair into `{coll_name}`: {question[:60]}")
 
 def retrieve_sql(
         query        : str,

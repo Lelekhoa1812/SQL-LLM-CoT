@@ -277,11 +277,11 @@ class QwenBot:
                     # Log success
                     log.info(f"[{tbl}] ✅ Success at attempt {attempt}: {best_sql[:60]}")
                     return question, best_sql, rows, rationale
-
+                # Failure
                 except Exception as e:
                     sql_history.append({"sql": sql, "error": str(e)})
                     log.warning(f"[{tbl}] ❌ Failed SQL: {sql[:50]} → {e}")
-
+        # Failure
         log.warning(f"[{tbl}] ⛔ Failed after {max_retries} retries: {question}")
         return None
 
@@ -330,7 +330,7 @@ class QwenBot:
             table_desc = json.loads(table_ctx).get("description", "") if table_ctx else ""
             example_qs = json.loads(table_ctx).get("example_questions", []) if table_ctx else []
             cot_prompt = (
-                f"The table `{tbl}` has the following business description:\n{table_desc}\n\n"
+                f"The table `{tbl}`, consist of these columns `{colstr}` has the following business description:\n{table_desc}\n\n"
                 f"Generate 10 realistic business questions that can be answered using this table only.\n"
                 f"Each should involve a MySQL query targeting `{tbl}`.\n"
                 f"Return a JSON array like:\n"
