@@ -153,7 +153,7 @@ class QwenBot:
             tbl_ctx = await asyncio.to_thread(self._llm, f"What is the table '{t}' about?\n{t}({', '.join(c)})")
             save_table_context(t, tbl_ctx)
         self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
-        self.chat_history.insert(0, Content(role="model", parts=[Part(text=f"Schema overview:\n{schema_txt}")]))
+        # self.chat_history.insert(0, Content(role="model", parts=[Part(text=f"Schema overview:\n{schema_txt}")]))
         log.info(f"🧠 Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{summary}")
         # ───── Step 3: CoT-based table-wise self-play QA generation ─────
         schema = db_schema()
