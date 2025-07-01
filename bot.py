@@ -169,14 +169,18 @@ class QwenBot:
             try:
                 res = await asyncio.to_thread(self._llm_schema, prompt)
                 log.info(f"[SCHEMA] ?? \n __COLLECTION_RAW__ \n{res}")
-                # Cleaning utils
+                # Clean & parse LLM output
                 cleaned = json.loads(_clean_md(res))
+                # Basic type and key check
                 assert isinstance(cleaned, dict) and "description" in cleaned
+                # Validate description quality
                 desc = cleaned.get("description", "").strip()
                 if not desc or len(desc) < 40:
                     raise ValueError("Empty or too short description")
+                # Validate example question list
                 if not isinstance(cleaned.get("example_questions", []), list) or len(cleaned["example_questions"]) < 5:
                     raise ValueError("Too few example questions")
+                # Save to memory + summary
                 summary_chunks.append(json.dumps(cleaned))
                 save_table_context(t, json.dumps(cleaned))
                 log.info(f"[SCHEMA] ✅ Added per-table collection \n __COLLECTION_SUMMARY__ \n{cleaned}")
