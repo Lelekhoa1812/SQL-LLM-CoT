@@ -125,7 +125,7 @@ class QwenBot:
 
 
     @retry_with_backoff(retries=5, delay=1)
-    async def _cold_start(self, rounds: int = 10):
+    async def _cold_start(self, rounds: int = 7):
         """
         Bootstraps QwenBot before user input:
         - Loads LTM into STM
@@ -145,26 +145,54 @@ class QwenBot:
             self.chat_history.append(Content(role="model", parts=[Part(text=f"(Q): {q} (A): {a}")]))
         log.info("✅ Loaded memory entries into STM and chat_history")
         # ───── Step 2: Generate schema summary ─────
-        schema = db_schema()
-        schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
-        intro = f"Database schema:\n{schema_txt}\n\nSummarize each table, purposes, and typical queries."
-        summary = await asyncio.to_thread(self._llm, intro)
-        for t, c in db_schema().items():
-            tbl_ctx = await asyncio.to_thread(self._llm, f"What is the table '{t}' about?\n{t}({', '.join(c)})")
-            save_table_context(t, tbl_ctx)
-        self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): {summary}")]))
-        # self.chat_history.insert(0, Content(role="model", parts=[Part(text=f"Schema overview:\n{schema_txt}")]))
-        log.info(f"🧠 Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{summary}")
+        try:
+            schema = db_schema()
+            schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
+            log.info(f"[SCHEMA]\n __SCHEMA_DETAILS__ \n{schema_txt}")
+            intro = (
+                f"Here is a MySQL db schema with multiple sales-related tables:\n"
+                f"{schema_txt}\n\n"
+                "For each table:\n"
+                "- Describe what business concept it stores.\n"
+                "- Give 10 example business questions it helps answer.\n"
+                "Format output as a JSON list: [{\"table\": ..., \"description\": ..., \"example_questions\": [...]}, ...]"
+            )
+            summary = await asyncio.to_thread(self._llm, intro)
+            if not summary.strip():
+                log.warning(f"[SCHEMA] Empty result – retrying with CoT")
+                cot_prompt = (
+                    f"{intro}\nThink step-by-step. Start by listing table names and guessing their topic, "
+                    "then suggest 2 questions each. Return JSON format."
+                )
+                summary = await asyncio.to_thread(self._llm, cot_prompt)
+            # Save per-chunk table vector summarization content
+            for t, c in db_schema().items():
+                prompt = (
+                    f"You're given a table `{t}` from a sales database with columns: {', '.join(c)}.\n"
+                    "Please answer:\n"
+                    "- What does this table store?\n"
+                    "- Provide 10 questions for this table.\n"
+                    "Output JSON like:\n"
+                    "{\"table\": \"...\", \"description\": \"...\", \"questions\": [\"...\", \"...\"]}"
+                )
+                tbl_ctx = await asyncio.to_thread(self._llm, prompt)
+                save_table_context(t, tbl_ctx)
+            self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): \n{summary}")]))
+            # self.chat_history.insert(0, Content(role="model", parts=[Part(text=f"(schema overview): \n{schema_txt}")]))
+            log.info(f"[SCHEMA] Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{summary}")
+        except Exception as e:
+            log.error(f"[SCHEMA] Failed to generate schema summary: {e}")
         # ───── Step 3: CoT-based table-wise self-play QA generation ─────
         schema = db_schema()
         tables = list(schema.keys())
-        attempted_sql, eval_budget = set(), 300  # increase total budget
         # Gen QA for each table
         for t_idx, tbl in enumerate(tables):
-            if t_idx >= 10: break  # limit max tables processed during cold-start
+            if t_idx >= 15: break  # limit max col-per-tables processed during cold-start
             colnames = schema[tbl]
             colstr = ", ".join(colnames)
             log.info(f"[ColdStart] Generating QA for table: {tbl}")
+            attempted_sql, eval_budget = set(), 500  # total budget
+            valid_qa_pairs = []                      # collect only validated entries
             # Generic prompt
             cot_prompt = (
                 f"The table `{tbl}` has the columns: {colstr}.\n"
@@ -173,64 +201,75 @@ class QwenBot:
                 f"[{{\"question\": \"...\", \"sql\": \"SELECT ... FROM {tbl} WHERE ...;\"}}, ...]\n"
                 f"Each SQL must target `{tbl}` and end with a semicolon. Use MySQL syntax."
             )
-            try:
-                cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
+            for i in range(rounds):  # <= NEW OUTER LOOP: multiple CoT rounds per table
+                log.info(f"[{tbl}] CoT-Round {i+1}/{rounds}")
                 try:
-                    qa_pairs = json.loads(_clean_md(cot_raw))
-                except Exception:
-                    log.warning(f"[{tbl}] Invalid JSON returned, attempting regex fallback")
-                    qa_pairs = self._parse_cot_fallback(cot_raw)
-                log.info(f"[{tbl}] Parsed {len(qa_pairs)} question–SQL candidates")
-            except Exception as e:
-                log.error(f"[{tbl}] Failed to generate questions: {e}")
-                continue
-            # Grouping QA to pairs
-            for pair in qa_pairs:
-                q = pair.get("question", "").strip()
-                raw_sql = pair.get("sql", "").strip()
-                if not q or not raw_sql or tbl.lower() not in raw_sql.lower():
-                    continue
-                try:
-                    # Step 3.1: Refine SQLs
-                    few_shots = vanna.similar_qa(q, k=3)
-                    prompt = vanna.get_sql_prompt(question=q, shots=few_shots)
-                    sql_candidates = []
-                    for _ in range(3):
-                        raw = vanna.submit_prompt(prompt)
-                        sql = vanna.extract_sql(raw)
-                        if sql and tbl.lower() in sql.lower():
-                            sql_candidates.append(sql)
-                    if raw_sql.lower().startswith("select") and tbl.lower() in raw_sql.lower():
-                        sql_candidates.append(raw_sql)
-                    # Rm duplicated SQLs
-                    dedup = []
-                    for s in sql_candidates:
-                        norm = re.sub(r"\s+", " ", s.lower().strip())
-                        if norm not in attempted_sql and not self.is_similar_sql(norm, attempted_sql):
-                            attempted_sql.add(norm)
-                            dedup.append(s)
-                    sql_candidates = dedup[: min(10, eval_budget)]
-                    eval_budget -= len(sql_candidates)
-                    if not sql_candidates or eval_budget <= 0:
-                        break
-                    # Step 3.2: Score + execute
-                    best_sql, rows = await run_and_score(q, sql_candidates)
-                    if not rows:
-                        raise ValueError("Query returned 0 rows")
-                    # Step 3.3: Reasoning insight
-                    rationale_prompt = (
-                        f"Q: {q}\nSample result from `{tbl}`:\n{str(rows[:5])}\n"
-                        "What insight can you infer from this result?"
-                    )
-                    rationale = await asyncio.to_thread(self._llm, rationale_prompt)
-                    # Step 3.4: Persist
-                    payload = {"sql": best_sql, "rows": rows, "answer": rationale}
-                    memory.add_stm(q, payload)
-                    add_sql_pair(q, best_sql, rows, rationale, collection_id=tbl)
-                    self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer): {rationale}")]))
-                    log.info(f"✅ [{tbl}] Stored: {q[:60]}")
+                    cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
+                    try:
+                        qa_pairs = json.loads(_clean_md(cot_raw))
+                    except Exception:
+                        log.warning(f"[{tbl}] Invalid JSON returned, attempting regex fallback")
+                        qa_pairs = self._parse_cot_fallback(cot_raw)
+                    log.info(f"[{tbl}] Parsed {len(qa_pairs)} question–SQL candidates")
                 except Exception as e:
-                    log.warning(f"❌ [{tbl}] Failed to process Q: {q[:40]} — {e}")
+                    log.error(f"[{tbl}] Failed to generate questions: {e}")
+                    continue
+                # Grouping QA to pairs
+                for pair in qa_pairs:
+                    q = pair.get("question", "").strip()
+                    raw_sql = pair.get("sql", "").strip()
+                    if not q or not raw_sql or tbl.lower() not in raw_sql.lower():
+                        continue
+                    try:
+                        # Step 3.1: Refine SQLs
+                        few_shots = vanna.similar_qa(q, k=3)
+                        prompt = vanna.get_sql_prompt(question=q, shots=few_shots)
+                        sql_candidates = []
+                        for _ in range(3):
+                            raw = vanna.submit_prompt(prompt)
+                            sql = vanna.extract_sql(raw)
+                            if sql and tbl.lower() in sql.lower():
+                                sql_candidates.append(sql)
+                        if raw_sql.lower().startswith("select") and tbl.lower() in raw_sql.lower():
+                            sql_candidates.append(raw_sql)
+                        # Rm duplicated SQLs
+                        dedup = []
+                        for s in sql_candidates:
+                            norm = re.sub(r"\s+", " ", s.lower().strip())
+                            if norm not in attempted_sql and not self.is_similar_sql(norm, attempted_sql):
+                                attempted_sql.add(norm)
+                                dedup.append(s)
+                        sql_candidates = dedup[: min(10, eval_budget)]
+                        eval_budget -= len(sql_candidates)
+                        if not sql_candidates or eval_budget <= 0:
+                            break
+                        if not dedup:
+                            continue
+                        # Step 3.2: Score + execute
+                        for sql in dedup:
+                            try:
+                                best_sql, rows = await run_and_score(q, sql)
+                                if not rows:
+                                    raise ValueError("Query returned 0 rows")
+                                # Step 3.3: Reasoning insight
+                                rationale_prompt = (
+                                    f"Q: {q}\nSample row from `{tbl}`:\n{str(rows[:5])}\n"
+                                    "→ What business insight can you infer?"
+                                )
+                                rationale = await asyncio.to_thread(self._llm, rationale_prompt)
+                                valid_qa_pairs.append((q, best_sql, rows, rationale))
+                                log.info(f"[Valid SQL] {q[:60]} → {best_sql[:50]}")
+                            except Exception as e:
+                                log.warning(f"❌ [Invalid SQL] {sql[:60]} — {e}")
+                    except Exception as e:
+                        log.warning(f"❌ [{tbl}] Failed to process Q: {q[:60]} — {e}")
+            # Step 3.5: Store only valid SQLs (for this table) ───
+            for q, sql, rows, rationale in valid_qa_pairs:
+                payload = {"sql": sql, "rows": rows, "answer": rationale}
+                memory.add_stm(q, payload)
+                add_sql_pair(q, sql, rows, rationale, collection_id=tbl)
+                self.chat_history.append(Content(role="model", parts=[Part(text=f"(question): {q} - (answer): {rationale}")]))
+            log.info(f"🎯 [{tbl}] {len(valid_qa_pairs)} valid QA pairs saved to LTM")
 
 
     # ──────────── Helper: ask Gemini-Vanna for 1 SQL ────────────
