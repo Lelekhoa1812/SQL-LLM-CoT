@@ -4,6 +4,7 @@ from google import genai
 from google.api_core import exceptions as gexc
 
 log = logging.getLogger("gemini-rotator")
+MODEL = "gemini-2.5-flash-preview-04-17"
 
 # This is a safe wrapper
 class GeminiModelWrapper:
@@ -11,25 +12,25 @@ class GeminiModelWrapper:
         self.parent = parent
 
     def generate_content(self, *args, **kw):
-        model_name = kw.pop("model", "gemini-pro")
+        model_name = kw.pop("model", MODEL)
         is_stream = kw.pop("stream", False)
         for attempt in range(5):
             try:
-                model = genai.GenerativeModel(model_name, client=self.parent._client)
+                client = self.parent._client
                 if is_stream:
-                    return model.generate_content(*args, stream=True, **kw)
+                    return client.models.generate_content(model=model_name, stream=True, *args, **kw)
                 else:
-                    return model.generate_content(*args, **kw)
+                    return client.models.generate_content(model=model_name, *args, **kw)
             except Exception as e:
                 if self.parent._should_rotate(e):
-                    log.warning(f"[Retry {attempt+1}/5] Rotating key due to: {e}")
+                    log.warning(f"[Retry {attempt+1}/5] Rotating Gemini key due to: {e}")
                     self.parent._swap_key()
                     time.sleep(1)
                     continue
                 raise
 
     def count_tokens(self, *args, **kwargs):
-        return self.parent.count_tokens(*args, **kwargs)
+        return self.parent._client.count_tokens(*args, **kwargs)
 
 class RotatingGeminiClient:
     """
@@ -58,36 +59,16 @@ class RotatingGeminiClient:
     def _swap_key(self):
         with self._lock:
             key = next(self._cycle)
-            log.warning("🔄 Switching Gemini key")
             self._client = genai.Client(api_key=key)
 
     def _should_rotate(self, exc: Exception) -> bool:
-        # 429 RESOURCE_EXHAUSTED or PERMISSION_DENIED indicate exhausted / disabled key
-        if isinstance(exc, gexc.ResourceExhausted):
-            return True
-        if isinstance(exc, gexc.PermissionDenied):
-            return True
-        return False
+        return isinstance(exc, (gexc.ResourceExhausted, gexc.PermissionDenied))
+
 
     # ---------- public proxy ----------------------------------------
     def generate_content(self, *args, **kw):
-        model_name = kw.pop("model", "gemini-pro")
-        is_stream = kw.pop("stream", False)
-        for attempt in range(5):
-            try:
-                model = genai.GenerativeModel(model_name, client=self._client)
-                if is_stream:
-                    return model.generate_content(*args, stream=True, **kw)
-                else:
-                    return model.generate_content(*args, **kw)
-            except Exception as e:
-                if self._should_rotate(e):
-                    log.warning(f"[Retry {attempt+1}/5] Rotating key due to: {e}")
-                    self._swap_key()
-                    time.sleep(1)
-                    continue
-                raise
-
+        return self.models.generate_content(*args, **kw)
+    
     # convenience passthrough for other genai methods you might need
     def __getattr__(self, item):
         return getattr(self._client, item)
