@@ -68,7 +68,7 @@ def add_sql_pair(
     col = _get_collection(coll_name)
     # Merge on identical norm_sql
     norm = _norm_sql(sql)
-    existing = col.find_one({"norm_sql": norm}):
+    existing = col.find_one({"norm_sql": norm})
     if existing:
         log.info(f"[LTM] Skipped duplicate SQL in `{coll_name}`: {sql[:80]}")
         merged = {**existing, **doc}
