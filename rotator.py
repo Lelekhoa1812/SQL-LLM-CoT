@@ -10,20 +10,20 @@ class GeminiModelWrapper:
     def __init__(self, parent):
         self.parent = parent
 
-    def generate_content(self, *args, **kw): # Enable parallel workers
-        is_stream = kw.get("stream", False)
-        if "stream" in kw:
-            del kw["stream"]
+    def generate_content(self, *args, **kw):
+        model_name = kw.pop("model", "gemini-pro")
+        is_stream = kw.pop("stream", False)
         for attempt in range(5):
             try:
+                model = genai.GenerativeModel(model_name, client=self.parent._client)
                 if is_stream:
-                    return self._client.models.stream_generate_content(*args, **kw)
+                    return model.generate_content(*args, stream=True, **kw)
                 else:
-                    return self._client.models.generate_content(*args, **kw)
+                    return model.generate_content(*args, **kw)
             except Exception as e:
-                if self._should_rotate(e):
+                if self.parent._should_rotate(e):
                     log.warning(f"[Retry {attempt+1}/5] Rotating key due to: {e}")
-                    self._swap_key()
+                    self.parent._swap_key()
                     time.sleep(1)
                     continue
                 raise
