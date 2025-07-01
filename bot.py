@@ -102,7 +102,7 @@ class QwenBot:
             log.error(f"[Gemini-Schema] Failed to generate schema summary: {e}")
             raise
 
-
+    # Hard reset on startup to avoid memory over-caching
     def reset_history(self):
         self.chat_history = []
         logging.info("🧼 Cleared chat_history")
@@ -115,8 +115,12 @@ class QwenBot:
         return [{"question": q.strip(), "sql": s.strip()} for q, s in zip(questions, clean_sqls)]
     
     @staticmethod
-    def is_similar_sql(new_sql, existing_list):
-        return any(difflib.SequenceMatcher(None, new_sql, old).ratio() > 0.97 for old in existing_list)
+    def is_similar_sql(self, sql_norm:str, tried:set[str], thresh:float=0.92)->bool:
+        from difflib import SequenceMatcher
+        for s in tried:
+            if SequenceMatcher(None, sql_norm, s).ratio() > thresh:
+                return True
+        return False
 
     async def _schema_reason(self, text: str) -> list[str]:
         """
@@ -190,6 +194,97 @@ class QwenBot:
         schema_summary = "[" + ",\n".join(summary_chunks) + "]"
         return schema_summary
 
+    async def sql_validator(
+        self,
+        question: str,
+        tbl: str,
+        max_retries: int = 5,
+        eval_cap: int = 30,
+    ) -> tuple[str, str, list[dict], str] | None:
+        """
+        Try repeatedly to generate, validate, and reason over a SQL command
+        for the given question and table. Uses Gemini+Vanna CoT loop.
+        Returns (question, sql, rows, rationale) if valid, else None.
+        """
+        sql_history = []
+        attempted_sql = set()
+        # Loop until exhaust
+        for attempt in range(1, max_retries + 1):
+            log.info(f"[{tbl}] ❓ Attempt {attempt} to solve: {question[:60]}")
+            # Step A: Construct prompt
+            if sql_history:
+                # Reflect on past errors
+                last_errors = "\n".join(
+                    [f"{i+1}) SQL: {e['sql'][:50]}... → Error: {e['error']}" for i, e in sql_history[-3:]]
+                )
+                prompt_head = (
+                    f"Re-infer business insight.\n"
+                    f"Q: {question}\nTable: `{tbl}`\n"
+                    f"Last attempts failed:\n{last_errors}\n"
+                    f"Now retry with a better SQL using only `{tbl}`."
+                )
+            else:
+                # First attempt: fresh CoT
+                prompt_head = (
+                    f"Q: {question}\nYou are writing a SQL query for the table `{tbl}` only.\n"
+                    "Think step by step and return only relevant SQL statements."
+                )
+            # Step B: Prompt via Vanna shots
+            few_shots = vanna.similar_qa(question, k=3)
+            base_prompt = vanna.get_sql_prompt(question=question, shots=few_shots)
+            full_prompt = f"{prompt_head}\n\n{base_prompt}"
+            # Step C: Generate SQLs via CoT
+            sql_candidates = []
+            for _ in range(2):
+                try:
+                    raw = vanna.submit_prompt(full_prompt)
+                    sql = vanna.extract_sql(raw)
+                    if sql and tbl.lower() in sql.lower():
+                        sql_candidates.append(sql)
+                except Exception as e:
+                    log.warning(f"[{tbl}] 🛑 SQL generation failed: {e}")
+            # Step D: Dedup
+            dedup = []
+            for s in sql_candidates:
+                norm = re.sub(r"\s+", " ", s.lower().strip())
+                if norm not in attempted_sql:
+                    attempted_sql.add(norm)
+                    dedup.append(s)
+            if not dedup:
+                log.warning(f"[{tbl}] ❌ No new SQLs at attempt {attempt}")
+                continue
+            # Step E: Execute and validate
+            for sql in dedup:
+                try:
+                    best_sql, rows = await run_and_score(question, sql)
+                    if not rows:
+                        raise ValueError("Query returned 0 rows")
+                    # Step F: Insight generation prompt
+                    if attempt == 1:
+                        insight_prompt = (
+                            f"Q: {question}\nSample rows from `{tbl}`:\n{rows[:5]}\n"
+                            "→ What business insight can you infer?"
+                        )
+                    else:
+                        insight_prompt = (
+                            f"Re-infer business insight.\n"
+                            f"Q: {question}\nSample rows from `{tbl}`:\n{rows[:5]}\n"
+                            f"Prior failed attempts:\n{last_errors}\n"
+                            "→ What insight does this new result support?"
+                        )
+                    # Reasoning
+                    rationale = await asyncio.to_thread(self._llm, insight_prompt)
+                    # Log success
+                    log.info(f"[{tbl}] ✅ Success at attempt {attempt}: {best_sql[:60]}")
+                    return question, best_sql, rows, rationale
+
+                except Exception as e:
+                    sql_history.append({"sql": sql, "error": str(e)})
+                    log.warning(f"[{tbl}] ❌ Failed SQL: {sql[:50]} → {e}")
+
+        log.warning(f"[{tbl}] ⛔ Failed after {max_retries} retries: {question}")
+        return None
+
     @retry_with_backoff(retries=5, delay=1)
     async def _cold_start(self, rounds: int = 7):
         """
@@ -258,54 +353,13 @@ class QwenBot:
                 # Grouping QA to pairs
                 for pair in qa_pairs:
                     q = pair.get("question", "").strip()
-                    raw_sql = pair.get("sql", "").strip()
-                    if not q or not raw_sql or tbl.lower() not in raw_sql.lower():
-                        continue
-                    try:
-                        # Step 3.1: Refine SQLs
-                        few_shots = vanna.similar_qa(q, k=3)
-                        prompt = vanna.get_sql_prompt(question=q, shots=few_shots)
-                        sql_candidates = []
-                        for _ in range(3):
-                            raw = vanna.submit_prompt(prompt)
-                            sql = vanna.extract_sql(raw)
-                            if sql and tbl.lower() in sql.lower():
-                                sql_candidates.append(sql)
-                        if raw_sql.lower().startswith("select") and tbl.lower() in raw_sql.lower():
-                            sql_candidates.append(raw_sql)
-                        # Rm duplicated SQLs
-                        dedup = []
-                        for s in sql_candidates:
-                            norm = re.sub(r"\s+", " ", s.lower().strip())
-                            if norm not in attempted_sql and not self.is_similar_sql(norm, attempted_sql):
-                                attempted_sql.add(norm)
-                                dedup.append(s)
-                        sql_candidates = dedup[: min(10, eval_budget, tbl_budget)]
-                        num_used = len(sql_candidates)
-                        eval_budget -= num_used
-                        local_budget -= num_used
-                        if not sql_candidates or eval_budget <= 0 or local_budget <= 0:
-                            break  # break out of the QA loop for this table (keep limit to ensure healthy server)
-                        if not dedup:
-                            continue
-                        # Step 3.2: Score + execute
-                        for sql in dedup:
-                            try:
-                                best_sql, rows = await run_and_score(q, sql)
-                                if not rows:
-                                    raise ValueError("Query returned 0 rows")
-                                # Step 3.3: Reasoning insight
-                                rationale_prompt = (
-                                    f"Q: {q}\nSample row from `{tbl}`:\n{str(rows[:5])}\n"
-                                    "→ What business insight can you infer?"
-                                )
-                                rationale = await asyncio.to_thread(self._llm, rationale_prompt)
-                                valid_qa_pairs.append((q, best_sql, rows, rationale))
-                                log.info(f"[Valid SQL] {q[:60]} → {best_sql[:50]}")
-                            except Exception as e:
-                                log.warning(f"❌ [Invalid SQL] {sql[:60]} — {e}")
-                    except Exception as e:
-                        log.warning(f"❌ [{tbl}] Failed to process Q: {q[:60]} — {e}")
+                    if not q: continue
+                    result = await self.sql_validator(q, tbl)
+                    if result:
+                        valid_qa_pairs.append(result)
+                        if len(valid_qa_pairs) >= 10:
+                            log.info(f"[{tbl}] 🎯 Reached 10 valid QA, skipping remaining.")
+                            break
             # Step 3.5: Store only valid SQLs (for this table) ───
             for q, sql, rows, rationale in valid_qa_pairs:
                 payload = {"sql": sql, "rows": rows, "answer": rationale}

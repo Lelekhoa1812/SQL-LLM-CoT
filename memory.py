@@ -126,3 +126,7 @@ def clear_all():
 def start_up_create_indexes():
     for tbl in db.list_collection_names():
         db[tbl].create_index([("norm_sql", ASCENDING)])
+
+def count_pairs(tbl:str)->int:
+    col = _get_collection(tbl)
+    return col.estimated_document_count()
