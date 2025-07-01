@@ -122,7 +122,35 @@ class QwenBot:
         except Exception:
             # fallback: dumb regex
             return [t for t in candidate_tables if t.lower() in text.lower()]
-
+        
+    async def _generate_schema_summary(self) -> str:
+        schema = db_schema()
+        tables = list(schema.keys())
+        summary_chunks = []
+        # Breakdown to smaller tables for better accuracy
+        for t in tables:
+            cols = schema[t]
+            coltxt = ", ".join(cols[:30]) + ("..." if len(cols) > 30 else "")
+            prompt = (
+                f"You're given a MySQL table named `{t}` with columns:\n{coltxt}\n\n"
+                "Describe in detail:\n"
+                "- What this table stores in business terms.\n"
+                "- What kind of sales analysis or reporting this table enables.\n"
+                "- Provide 5–10 example analytical questions someone might ask about this table.\n"
+                "Return JSON like:\n"
+                "{\"table\": \"...\", \"description\": \"...\", \"example_questions\": [\"...\", \"...\"]}"
+            )
+            try:
+                res = await asyncio.to_thread(self._llm, prompt)
+                summary_chunks.append(res)
+                # Save per-chunk table vector summarization content
+                save_table_context(t, res)
+                log.info(f"[SCHEMA] ✅ Added per-table collection \n __COLLECTION_SUMMARY__ \n{res}")
+            except Exception as e:
+                log.warning(f"[SCHEMA] ❌ Failed for `{t}`: {e}")
+        # Assemble final full schema summary
+        schema_summary = "[" + ",\n".join(summary_chunks) + "]"
+        return schema_summary
 
     @retry_with_backoff(retries=5, delay=1)
     async def _cold_start(self, rounds: int = 7):
@@ -149,38 +177,10 @@ class QwenBot:
             schema = db_schema()
             schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.items())
             log.info(f"[SCHEMA]\n __SCHEMA_DETAILS__ \n{schema_txt}")
-            intro = (
-                f"Here is a MySQL db schema with multiple sales-related tables:\n"
-                f"{schema_txt}\n\n"
-                "For each table:\n"
-                "- Describe what business concept it stores.\n"
-                "- Give 10 example business questions it helps answer.\n"
-                "Format output as a JSON list: [{\"table\": ..., \"description\": ..., \"example_questions\": [...]}, ...]"
-            )
-            summary = await asyncio.to_thread(self._llm, intro)
-            if not summary.strip():
-                log.warning(f"[SCHEMA] Empty result – retrying with CoT")
-                cot_prompt = (
-                    f"{intro}\nThink step-by-step. Start by listing table names and guessing their topic, "
-                    "then suggest 2 questions each. Return JSON format."
-                )
-                summary = await asyncio.to_thread(self._llm, cot_prompt)
-            self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): \n{summary}")]))
-            # self.chat_history.insert(0, Content(role="model", parts=[Part(text=f"(schema overview): \n{schema_txt}")]))
-            log.info(f"[SCHEMA] Added schema summary \n __SCHEMA_SUMMARY__ \n{summary}")
-            # Save per-chunk table vector summarization content
-            for t, c in db_schema().items():
-                prompt = (
-                    f"You're given a table `{t}` from a sales database with columns: {', '.join(c)}.\n"
-                    "Please answer:\n"
-                    "- What does this table store?\n"
-                    "- Provide 10 questions for this table.\n"
-                    "Output JSON like:\n"
-                    "{\"table\": \"...\", \"description\": \"...\", \"questions\": [\"...\", \"...\"]}"
-                )
-                tbl_ctx = await asyncio.to_thread(self._llm, prompt)
-                save_table_context(t, tbl_ctx)
-                log.info(f"[SCHEMA] Added per-table collection \n __COLLECTION_SUMMARY__ \n{tbl_ctx}")
+            schema_summary = await self._generate_schema_summary()
+            save_table_context("schema", schema_summary)
+            log.info(f"[SCHEMA] Added schema summary \n __SCHEMA_SUMMARY__ \n{schema_summary}")
+            self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema summary):\n{schema_summary}")]))
         except Exception as e:
             log.error(f"[SCHEMA] Failed to generate schema summary: {e}")
         # ───── Step 3: CoT-based table-wise self-play QA generation ─────
