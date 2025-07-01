@@ -165,6 +165,9 @@ class QwenBot:
                     "then suggest 2 questions each. Return JSON format."
                 )
                 summary = await asyncio.to_thread(self._llm, cot_prompt)
+            self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): \n{summary}")]))
+            # self.chat_history.insert(0, Content(role="model", parts=[Part(text=f"(schema overview): \n{schema_txt}")]))
+            log.info(f"[SCHEMA] Added schema summary \n __SCHEMA_SUMMARY__ \n{summary}")
             # Save per-chunk table vector summarization content
             for t, c in db_schema().items():
                 prompt = (
@@ -177,22 +180,19 @@ class QwenBot:
                 )
                 tbl_ctx = await asyncio.to_thread(self._llm, prompt)
                 save_table_context(t, tbl_ctx)
-            self.chat_history.append(Content(role="model", parts=[Part(text=f"(schema): \n{summary}")]))
-            # self.chat_history.insert(0, Content(role="model", parts=[Part(text=f"(schema overview): \n{schema_txt}")]))
-            log.info(f"[SCHEMA] Added schema summary to LTM + STM \n __SCHEMA_SUMMARY__ \n{summary}")
+                log.info(f"[SCHEMA] Added per-table collection \n __COLLECTION_SUMMARY__ \n{tbl_ctx}")
         except Exception as e:
             log.error(f"[SCHEMA] Failed to generate schema summary: {e}")
         # ───── Step 3: CoT-based table-wise self-play QA generation ─────
-        schema = db_schema()
-        tables = list(schema.keys())
+        schema = db_schema(); tables = list(schema.keys()); eval_budget = set(), 500 # total budget avoid bloating
         # Gen QA for each table
         for t_idx, tbl in enumerate(tables):
             if t_idx >= 15: break  # limit max col-per-tables processed during cold-start
             colnames = schema[tbl]
             colstr = ", ".join(colnames)
             log.info(f"[ColdStart] Generating QA for table: {tbl}")
-            attempted_sql, eval_budget = set(), 500  # total budget
-            valid_qa_pairs = []                      # collect only validated entries
+            attempted_sql, tbl_budget = 50  
+            valid_qa_pairs = [] # collect only validated entries
             # Generic prompt
             cot_prompt = (
                 f"The table `{tbl}` has the columns: {colstr}.\n"
@@ -239,10 +239,12 @@ class QwenBot:
                             if norm not in attempted_sql and not self.is_similar_sql(norm, attempted_sql):
                                 attempted_sql.add(norm)
                                 dedup.append(s)
-                        sql_candidates = dedup[: min(10, eval_budget)]
-                        eval_budget -= len(sql_candidates)
-                        if not sql_candidates or eval_budget <= 0:
-                            break
+                        sql_candidates = dedup[: min(10, eval_budget, tbl_budget)]
+                        num_used = len(sql_candidates)
+                        eval_budget -= num_used
+                        local_budget -= num_used
+                        if not sql_candidates or eval_budget <= 0 or local_budget <= 0:
+                            break  # break out of the QA loop for this table (keep limit to ensure healthy server)
                         if not dedup:
                             continue
                         # Step 3.2: Score + execute
