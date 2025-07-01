@@ -1,4 +1,4 @@
-# bot.py  ── Qwen (reasoning)  ↔  Gemini-Vanna (SQL RAG)
+# bot.py
 import os, re, asyncio, logging, json
 from utils   import db_schema
 from sql     import run_and_score, vanna # vanna = GeminiVanna instance
@@ -90,6 +90,7 @@ class QwenBot:
         clean_sqls = [s if isinstance(s, str) else s[0] for s in sqls]
         return [{"question": q.strip(), "sql": s.strip()} for q, s in zip(questions, clean_sqls)]
     
+    @staticmethod
     def is_similar_sql(new_sql, existing_list):
         return any(difflib.SequenceMatcher(None, new_sql, old).ratio() > 0.97 for old in existing_list)
 
@@ -191,7 +192,7 @@ class QwenBot:
             colnames = schema[tbl]
             colstr = ", ".join(colnames)
             log.info(f"[ColdStart] Generating QA for table: {tbl}")
-            attempted_sql, tbl_budget = 50  
+            attempted_sql = set(); tbl_budget = 50
             valid_qa_pairs = [] # collect only validated entries
             # Generic prompt
             cot_prompt = (
@@ -207,6 +208,9 @@ class QwenBot:
                     cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
                     try:
                         qa_pairs = json.loads(_clean_md(cot_raw))
+                        if not qa_pairs or len(qa_pairs) == 0:
+                            tbl_budget -= 5  # penalize empty round to break out
+                            continue
                     except Exception:
                         log.warning(f"[{tbl}] Invalid JSON returned, attempting regex fallback")
                         qa_pairs = self._parse_cot_fallback(cot_raw)
@@ -367,7 +371,6 @@ class QwenBot:
                 for tbl in await self._schema_reason(best_sql):
                     add_sql_pair(question_en, best_sql, rows, answer, collection_id=tbl)
                 memory.add_stm(question_en, payload)
-                add_sql_pair(question_en, best_sql, rows, answer)
                 log.info("Solved on attempt %d", attempt)
                 return best_sql, rows, answer
             except Exception as e:
