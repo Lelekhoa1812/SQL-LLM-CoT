@@ -18,7 +18,7 @@ class GeminiModelWrapper:
             try:
                 client = self.parent._client
                 if is_stream:
-                    return client.models.generate_content(model=model_name, stream=True, *args, **kw)
+                    return client.models.generate_content(model=model_name, *args, **kw)
                 else:
                     return client.models.generate_content(model=model_name, *args, **kw)
             except Exception as e:
