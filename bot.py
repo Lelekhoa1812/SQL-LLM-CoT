@@ -115,7 +115,7 @@ class QwenBot:
         return [{"question": q.strip(), "sql": s.strip()} for q, s in zip(questions, clean_sqls)]
     
     @staticmethod
-    def is_similar_sql(self, sql_norm:str, tried:set[str], thresh:float=0.92)->bool:
+    def is_similar_sql(sql_norm:str, tried:set[str], thresh:float=0.92)->bool:
         from difflib import SequenceMatcher
         for s in tried:
             if SequenceMatcher(None, sql_norm, s).ratio() > thresh:
@@ -297,7 +297,7 @@ class QwenBot:
         """
         self.reset_history()
         memory.clear_all()
-        attempted_sql, eval_budget = set(), 30 # Refine duplicated SQLs and setting max budget allowance
+        attempted_sql = set()
         log.info("[Cold Start] started")
         # ───── Step 1: Load existing memory into STM/chat_history ─────
         for doc in retrieve_sql("", k=30):
@@ -317,7 +317,7 @@ class QwenBot:
         except Exception as e:
             log.error(f"[SCHEMA] Failed to generate schema summary: {e}")
         # ───── Step 3: CoT-based table-wise self-play QA generation ─────
-        schema = db_schema(); tables = list(schema.keys()); eval_budget = set(), 500 # total budget avoid bloating
+        schema = db_schema(); tables = list(schema.keys()); eval_budget = 500 # total budget avoid bloating
         # Gen QA for each table
         for t_idx, tbl in enumerate(tables):
             if t_idx >= 15: break  # limit max col-per-tables processed during cold-start
@@ -444,6 +444,7 @@ class QwenBot:
              # (e) Try best via run_and_score
             try:
                 best_sql, rows = await run_and_score(question_en, cand_sqls)
+                if not best_sql: continue
                 if not rows: raise ValueError("0 rows returned")
                 # (f) Final answer generation with context-aware prompt
                 tables = await self._schema_reason(best_sql)
