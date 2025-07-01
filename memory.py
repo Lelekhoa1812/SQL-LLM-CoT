@@ -34,6 +34,11 @@ def _get_collection(name: str):
 
 # ───────── Helpers
 def _norm_sql(sql: str) -> str:
+    '''
+    Frequent filter condition, and without an index, MongoDB will do a collection scan every time. With a proper index:
+    + Lookup time drops from O(n) → O(log n)
+    + Especially critical once each table's collection reaches thousands of rows.
+    '''
     return re.sub(r"\s+", " ", sql.lower()).strip()
 
 # Lightweight regex fallback for table detection
