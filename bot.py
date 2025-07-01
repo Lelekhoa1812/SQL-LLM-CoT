@@ -144,6 +144,7 @@ class QwenBot:
             )
             try:
                 res = await asyncio.to_thread(self._llm, prompt)
+                log.info(f"[SCHEMA] ?? \n __COLLECTION_RAW__ \n{res}")
                 cleaned = json.loads(_clean_md(res))
                 assert isinstance(cleaned, dict) and "description" in cleaned
                 if not cleaned or len(cleaned) < 20:
