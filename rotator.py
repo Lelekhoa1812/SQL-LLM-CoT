@@ -15,7 +15,7 @@ class GeminiModelWrapper:
         is_stream = kw.pop("stream", False)
         for attempt in range(5):
             try:
-                model = genai.GenerativeModel(model_name, client=self.parent._client)
+                model = genai.Client(model_name, client=self.parent._client)
                 if is_stream:
                     return model.generate_content(*args, stream=True, **kw)
                 else:
@@ -77,7 +77,7 @@ class RotatingGeminiClient:
         is_stream = kw.pop("stream", False)
         for attempt in range(5):
             try:
-                model = genai.GenerativeModel(model_name, client=self._client)
+                model = genai.Client(model_name, client=self._client)
                 if is_stream:
                     return model.generate_content(*args, stream=True, **kw)
                 else:
