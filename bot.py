@@ -144,12 +144,12 @@ class QwenBot:
             )
             try:
                 res = await asyncio.to_thread(self._llm, prompt)
-                cleaned = _clean_md(res)
+                cleaned = json.loads(_clean_md(res))
+                assert isinstance(cleaned, dict) and "description" in cleaned
                 if not cleaned or len(cleaned) < 20:
                     raise ValueError("Empty or invalid summary")
-                summary_chunks.append(cleaned)
-                # Save per-chunk table vector summarization content
-                save_table_context(t, cleaned)
+                summary_chunks.append(json.dumps(cleaned))
+                save_table_context(t, json.dumps(cleaned))
                 log.info(f"[SCHEMA] ✅ Added per-table collection \n __COLLECTION_SUMMARY__ \n{cleaned}")
             except Exception as e:
                 log.warning(f"[SCHEMA] ❌ Failed for `{t}`: {e}")
