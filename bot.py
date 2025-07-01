@@ -166,7 +166,7 @@ class QwenBot:
                 "Describe in detail:\n"
                 "- What this table stores in business terms.\n"
                 "- What kind of sales analysis or reporting this table enables.\n"
-                "- Provide 5–10 example analytical questions someone might ask about this table.\n"
+                "- Provide 20 example analytical questions someone might ask about this table.\n"
                 "Return JSON like:\n"
                 "{\"table\": \"...\", \"description\": \"...\", \"example_questions\": [\"...\", \"...\"]}"
             )
@@ -297,7 +297,6 @@ class QwenBot:
         """
         self.reset_history()
         memory.clear_all()
-        attempted_sql = set()
         log.info("[Cold Start] started")
         # ───── Step 1: Load existing memory into STM/chat_history ─────
         for doc in retrieve_sql("", k=30):
@@ -324,15 +323,18 @@ class QwenBot:
             colnames = schema[tbl]
             colstr = ", ".join(colnames)
             log.info(f"[ColdStart] Generating QA for table: {tbl}")
-            attempted_sql = set(); tbl_budget = 50
+            tbl_budget = 50
             valid_qa_pairs = [] # collect only validated entries
             # Generic prompt
+            table_ctx = get_table_context(tbl)
+            table_desc = json.loads(table_ctx).get("description", "") if table_ctx else ""
+            example_qs = json.loads(table_ctx).get("example_questions", []) if table_ctx else []
             cot_prompt = (
-                f"The table `{tbl}` has the columns: {colstr}.\n"
-                f"Generate 10 realistic business questions about this table ONLY.\n"
-                f"Return ONLY a JSON array with this structure:\n"
+                f"The table `{tbl}` has the following business description:\n{table_desc}\n\n"
+                f"Generate 10 realistic business questions that can be answered using this table only.\n"
+                f"Each should involve a MySQL query targeting `{tbl}`.\n"
+                f"Return a JSON array like:\n"
                 f"[{{\"question\": \"...\", \"sql\": \"SELECT ... FROM {tbl} WHERE ...;\"}}, ...]\n"
-                f"Each SQL must target `{tbl}` and end with a semicolon. Use MySQL syntax."
             )
             for i in range(rounds):  # <= NEW OUTER LOOP: multiple CoT rounds per table
                 log.info(f"[{tbl}] CoT-Round {i+1}/{rounds}")
@@ -340,9 +342,10 @@ class QwenBot:
                     cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
                     try:
                         qa_pairs = json.loads(_clean_md(cot_raw))
-                        if not qa_pairs or len(qa_pairs) == 0:
+                        if (not qa_pairs or len(qa_pairs) == 0) and example_qs:
+                            log.warning(f"[{tbl}] ❗ Falling back to example_questions")
+                            qa_pairs = [{"question": q, "sql": f"SELECT * FROM {tbl} LIMIT 10;"} for q in example_qs[:10]]
                             tbl_budget -= 5  # penalize empty round to break out
-                            continue
                     except Exception:
                         log.warning(f"[{tbl}] Invalid JSON returned, attempting regex fallback")
                         qa_pairs = self._parse_cot_fallback(cot_raw)
