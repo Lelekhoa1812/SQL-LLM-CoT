@@ -12,6 +12,11 @@ pw = os.getenv("DB_PASSWORD")
 host = os.getenv("DB_HOST")
 port = os.getenv("DB_PORT", "3306")
 db = os.getenv("DB_NAME")
+# Save prefix missing checkpoint
+REQUIRED_VARS = ["DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME"]
+missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
+if missing:
+    raise RuntimeError(f"❌ Missing required DB env-vars: {missing}")
 
 # ---------- MySQL Engine ----------
 DB_CFG = {
