@@ -35,6 +35,16 @@ def _clean_md(text: str) -> str:
             return match[0].strip()
     return text.strip()
 
+def _clean_json(text: str) -> str:
+    if "```" in text:
+        match = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+        if match:
+            return match[0].strip()
+    # Fallback cleanup: remove markdown bullets etc.
+    text = re.sub(r"^\s*[-*]\s*", "", text.strip(), flags=re.M)
+    return text.strip()
+
+
 class QwenBot:
     def __init__(self):
         self.chat_history: list[Content] = []
@@ -146,7 +156,7 @@ class QwenBot:
         )
         raw = await asyncio.to_thread(self._llm_no_mem, prompt)
         try:
-            tables = json.loads(_clean_md(raw))
+            tables = json.loads(_clean_json(raw))
             return [t.lower() for t in tables if t.lower() in candidate_tables]
         except Exception:
             # fallback: dumb regex
@@ -174,7 +184,7 @@ class QwenBot:
                 res = await asyncio.to_thread(self._llm_schema, prompt)
                 log.info(f"[SCHEMA] ?? \n __COLLECTION_RAW__ \n{res}")
                 # Clean & parse LLM output
-                cleaned = json.loads(_clean_md(res))
+                cleaned = json.loads(_clean_json(res))
                 # Basic type and key check
                 assert isinstance(cleaned, dict) and "description" in cleaned
                 # Validate description quality
@@ -330,11 +340,11 @@ class QwenBot:
             table_desc = json.loads(table_ctx).get("description", "") if table_ctx else ""
             example_qs = json.loads(table_ctx).get("example_questions", []) if table_ctx else []
             cot_prompt = (
-                f"The table `{tbl}`, consist of these columns `{colstr}` has the following business description:\n{table_desc}\n\n"
-                f"Generate 10 realistic business questions that can be answered using this table only.\n"
-                f"Each should involve a MySQL query targeting `{tbl}`.\n"
-                f"Return a JSON array like:\n"
-                f"[{{\"question\": \"...\", \"sql\": \"SELECT ... FROM {tbl} WHERE ...;\"}}, ...]\n"
+                f"The table `{tbl}`, consisting of the columns `{colstr}`, has the following business description:\n{table_desc}\n\n"
+                "Generate 10 realistic business questions that can be answered using **only this table**.\n"
+                f"For each, include a **valid MySQL SQL query** that targets `{tbl}` only.\n\n"
+                "**IMPORTANT:** Return **only** a valid JSON array. No commentary. No markdown. Example:\n"
+                "[{{\"question\": \"...\", \"sql\": \"SELECT ... FROM {tbl} WHERE ...;\"}}, ...]"
             )
             for i in range(rounds):  # <= NEW OUTER LOOP: multiple CoT rounds per table
                 log.info(f"[{tbl}] CoT-Round {i+1}/{rounds}")
@@ -342,7 +352,7 @@ class QwenBot:
                     cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
                     log.info(f"[{tbl} - CoT {i+1}/{rounds} Raw CoT response: {cot_raw}")
                     try:
-                        qa_pairs = json.loads(_clean_md(cot_raw))
+                        qa_pairs = json.loads(_clean_json(cot_raw))
                         if (not qa_pairs or len(qa_pairs) == 0) and example_qs:
                             log.warning(f"[{tbl}] ❗ Falling back to example_questions")
                             qa_pairs = [{"question": q, "sql": f"SELECT * FROM {tbl} LIMIT 10;"} for q in example_qs[:10]]
