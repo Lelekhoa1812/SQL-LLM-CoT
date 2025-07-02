@@ -310,6 +310,8 @@ class QwenBot:
         log.info("[Cold Start] started")
         # ───── Step 1: Load existing memory into STM/chat_history ─────
         for doc in retrieve_sql("", k=30):
+            if "question" not in doc or "sql" not in doc or "answer" not in doc:
+                continue # defensive skip
             q, sql, a = doc["question"], doc["sql"], doc["answer"]
             memory.add_stm(q, {"sql": sql, "rows": doc["rows"], "answer": a})
             self.chat_history.append(Content(role="model", parts=[Part(text=f"(Q): {q} (A): {a}")]))

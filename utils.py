@@ -3,6 +3,9 @@ import functools, logging, os, pandas as pd
 from sqlalchemy import create_engine, inspect, text
 from databases import Database
 
+log = logging.getLogger("utils-log")
+log.info("🚀 Starting memory utils...")
+
 # Prefixes
 user = os.getenv("DB_USER")
 pw = os.getenv("DB_PASSWORD")
@@ -18,11 +21,15 @@ DB_CFG = {
     "port":     "3306",
     "db":       db,
 }
-ENGINE = create_engine(
-    f"mysql+pymysql://{DB_CFG['user']}:{DB_CFG['password']}@"
-    f"{DB_CFG['host']}:{DB_CFG['port']}/{DB_CFG['db']}",
-    pool_recycle=3600,
-)
+try:
+    ENGINE = create_engine(
+        f"mysql+pymysql://{DB_CFG['user']}:{DB_CFG['password']}@"
+        f"{DB_CFG['host']}:{DB_CFG['port']}/{DB_CFG['db']}",
+        pool_recycle=3600,
+    )
+except Exception as e:
+    log.error("🚫 Could not connect to MySQL: %s", e)
+    ENGINE = None
 
 DATABASE = Database(f"mysql+pymysql://{DB_CFG['user']}:{DB_CFG['password']}@"
                     f"{DB_CFG['host']}:{DB_CFG['port']}/{DB_CFG['db']}")
@@ -67,7 +74,14 @@ async def async_execute(sql: str) -> list[dict]:
 # ---------- Introspect schema once & cache ----------
 @functools.cache
 def db_schema() -> dict[str, list[str]]:
-    insp = inspect(ENGINE)
-    schema = {tbl: [col["name"] for col in insp.get_columns(tbl)] for tbl in insp.get_table_names()}
-    log.info("🎯 [UTILS] DB schema cached: %s", schema.keys())
-    return schema
+    if ENGINE is None:
+        log.warning("⚠️ [UTILS] DB unavailable, returning empty schema")
+        return {}
+    try:
+        insp = inspect(ENGINE)
+        schema = {tbl: [col["name"] for col in insp.get_columns(tbl)] for tbl in insp.get_table_names()}
+        log.info("🎯 [UTILS] DB schema cached: %s", schema.keys())
+        return schema
+    except Exception as e:
+        log.error("⚠️ [UTILS] Schema introspection failed: %s", e)
+        return {}
