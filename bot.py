@@ -350,7 +350,9 @@ class QwenBot:
                 log.info(f"[{tbl}] CoT-Round {i+1}/{rounds}")
                 try:
                     cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
-                    log.info(f"[{tbl} - CoT {i+1}/{rounds} Raw CoT response: {cot_raw}")
+                    if not cot_raw.strip().startswith("[") or "{" not in cot_raw:
+                        raise ValueError(f"[{tbl} - CoT {i+1}/{rounds}] Likely not a JSON array, intervene response again!")
+                    log.info(f"[{tbl} - CoT {i+1}/{rounds}] Raw CoT response: {cot_raw}")
                     try:
                         qa_pairs = json.loads(_clean_json(cot_raw))
                         if (not qa_pairs or len(qa_pairs) == 0) and example_qs:
