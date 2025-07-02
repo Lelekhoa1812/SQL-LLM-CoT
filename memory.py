@@ -125,6 +125,7 @@ def get_table_context(tbl: str) -> str:
     raw = doc["context"] if doc else ""
     try:
         _ = json.loads(raw)
+        logging.info(f"[LTM] Loaded raw`{tbl}`: {raw}")
         return raw
     except Exception as e:
         logging.warning(f"[LTM] Invalid JSON for `{tbl}`: {e}")

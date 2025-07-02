@@ -306,7 +306,7 @@ class QwenBot:
         - Saves only successful ones into LTM and STM
         """
         self.reset_history()
-        memory.clear_all()
+        # memory.clear_all()
         log.info("[Cold Start] started")
         # ───── Step 1: Load existing memory into STM/chat_history ─────
         for doc in retrieve_sql("", k=30):
