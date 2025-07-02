@@ -1,5 +1,5 @@
 # memory.py
-import os, logging, re, uuid, numpy as np
+import os, logging, re, uuid, json, numpy as np
 
 # DBs
 from cachetools import LRUCache
@@ -120,7 +120,15 @@ def retrieve_sql(
 # Save / get table context  (tiny docs per table)
 def save_table_context(tbl, ctx): db["table_context"].update_one(
         {"tbl": tbl}, {"$set": {"context": ctx, "embedding": _embed(tbl)}}, upsert=True)
-def get_table_context(tbl): doc = db["table_context"].find_one({"tbl": tbl}); return doc["context"] if doc else ""
+def get_table_context(tbl: str) -> str:
+    doc = db["table_context"].find_one({"tbl": tbl})
+    raw = doc["context"] if doc else ""
+    try:
+        _ = json.loads(raw)
+        return raw
+    except Exception as e:
+        logging.warning(f"[LTM] Invalid JSON for `{tbl}`: {e}")
+        return ""
 
 
 # ------------ SERVICES --------------------------------------------------
