@@ -62,6 +62,9 @@ async def async_execute(sql: str) -> list[dict]:
     2. automatic reconnect & fall-back to the sync LRU cache
     """
     try:
+        if ENGINE is None:
+            log.warning(" [UTILS] DB offline, returning empty rows")
+            return []
         if not DATABASE.is_connected:
             await DATABASE.connect()
         results = await DATABASE.fetch_all(query=sql)

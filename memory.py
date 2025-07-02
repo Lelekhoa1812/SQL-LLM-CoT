@@ -4,6 +4,11 @@ import os, logging, re, uuid, json, numpy as np
 # DBs
 from cachetools import LRUCache
 from pymongo import MongoClient, ASCENDING
+
+# Embed
+import os
+os.environ["HF_HOME"] = "/tmp/hf_cache"  # write-safe
+os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/tmp/hf_cache/sentence-transformers"
 from sentence_transformers import SentenceTransformer
 
 log = logging.getLogger("memory-log")

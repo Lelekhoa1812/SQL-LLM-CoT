@@ -28,6 +28,7 @@ RUN useradd -m -u 1000 user
 RUN mkdir -p /app \
     && mkdir -p /app/.cache/huggingface/hub \
     && mkdir -p /app/model_cache \
+    && mkdir -p /app/history \
     && chown -R user:user /app
 
 # ─── Model preloader ───────────────────────────────────────────
@@ -37,6 +38,9 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 # Copy project files
 COPY . .
+
+# Batch HF model caching
+RUN mkdir -p /tmp/hf_cache && chown -R user:user /tmp/hf_cache
 
 # Switch to non-root user (important AFTER chown)
 USER user
