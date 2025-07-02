@@ -340,6 +340,7 @@ class QwenBot:
                 log.info(f"[{tbl}] CoT-Round {i+1}/{rounds}")
                 try:
                     cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
+                    log.info(f"[{tbl} - CoT {i+1}/{rounds} Raw CoT response: {cot_raw}")
                     try:
                         qa_pairs = json.loads(_clean_md(cot_raw))
                         if (not qa_pairs or len(qa_pairs) == 0) and example_qs:
