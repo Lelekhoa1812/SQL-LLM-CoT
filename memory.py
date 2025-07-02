@@ -111,6 +111,8 @@ def retrieve_sql(
     for name in target_colls:
         col = db[name]
         for d in col.find({}, {"embedding":1, "question":1, "sql":1, "rows":1, "answer":1}):
+            if "question" not in d or "sql" not in d:
+                continue # skip malformed docs
             emb = np.array(d["embedding"])
             scored.append((float(np.dot(query_emb, emb)), d))
     # Sort on sim-score
@@ -128,7 +130,9 @@ def get_table_context(tbl: str) -> str:
         logging.info(f"[LTM] Loaded raw`{tbl}`: {raw}")
         return raw
     except Exception as e:
-        logging.warning(f"[LTM] Invalid JSON for `{tbl}`: {e}")
+        # purge corrupt doc so we don't reuse it
+        db["table_context"].delete_one({"tbl": tbl})
+        log.warning(f"[memory] Removed invalid context for {tbl}")
         return ""
 
 
