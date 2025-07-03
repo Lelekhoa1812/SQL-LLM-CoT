@@ -31,6 +31,10 @@ class GeminiVanna(VannaBase):
         for t, cols in schema.items():
             self.add_ddl(f"{t}({', '.join(cols)})")
         self.model = MODEL
+        for tbl in schema:         # Backup DLL with context-wise info
+            ctx = get_table_context(tbl)
+            if ctx and "description" in ctx:
+                self.add_documentation(f"{tbl}: {ctx['description']}")
 
     @retry_with_backoff(retries=4, delay=1.5)
     def submit_prompt(self, prompt, **kwargs) -> str:

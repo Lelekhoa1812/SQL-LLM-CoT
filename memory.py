@@ -126,7 +126,7 @@ def retrieve_sql(
     scored.sort(key=lambda x: x[0], reverse=True)
     return [d for _, d in scored[:k]]
 
-# Save / get table context  (tiny docs per table)
+# Save / get table context (tiny docs per table)
 def save_table_context(tbl, ctx):
     """
     Save per-table summary context (as dict or JSON string) and embed table name + context for RAG.

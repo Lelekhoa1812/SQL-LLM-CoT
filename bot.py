@@ -139,16 +139,14 @@ class QwenBot:
         Returns list of table names in lower-case.
         """
         candidate_tables = list(db_schema().keys())  # dynamic!
-        tbl_contexts = [
-            f"{tbl}: {get_table_context(tbl)}"
-            for tbl in candidate_tables if get_table_context(tbl)
-        ]
-        # tbl_str = ", ".join(candidate_tables)
-        # prompt = (
-        #     f"Given the following user text or SQL, pick which tables "
-        #     f"it is MOST related to from this list:\n{tbl_str}\n\n"
-        #     f"TEXT:\n{text}\n\nReturn a JSON array of table names."
-        # )
+        # Fetch table context (ctx string + vector)
+        tbl_contexts = []
+        for tbl in candidate_tables:
+            ctx = get_table_context(tbl)
+            if ctx:
+                desc = ctx.get("description", "")
+                sample_qs = "\n".join(ctx.get("example_questions", [])[:3])
+                tbl_contexts.append(f"{tbl}:\n{desc}\nSample questions:\n{sample_qs}")
         prompt = (
             "Below are table summaries:\n"
             + "\n".join(tbl_contexts[:20]) + "\n\n"
