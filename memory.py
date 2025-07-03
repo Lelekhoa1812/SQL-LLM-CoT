@@ -21,7 +21,7 @@ def _embed(txt: str):   # returns list[float]
 
 # -------- STM: in-process LRU cache -----------
 STM = LRUCache(maxsize=128)
-get_stm  = STM.get
+get_stm = lambda q: STM.get(_norm_question(q))
 add_stm  = lambda q, r: STM.__setitem__(q, r)
 
 # -------- LTM: MongoDB + embeddings -----------
@@ -45,6 +45,8 @@ def _norm_sql(sql: str) -> str:
     + Especially critical once each table's collection reaches thousands of rows.
     '''
     return re.sub(r"\s+", " ", sql.lower()).strip()
+def _norm_question(q: str) -> str:
+    return re.sub(r"[^\w\s]", "", q.lower()).strip()
 
 # Lightweight regex fallback for table detection
 _TABLE_RE = re.compile(r"\b(from|join)\s+([a-zA-Z0-9_]+)", re.I)
