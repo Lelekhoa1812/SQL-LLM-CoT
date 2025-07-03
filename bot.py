@@ -13,6 +13,7 @@ from google import genai
 from google.genai.types import Content, Part
 from llm_ut  import retry_with_backoff 
 from rotator import RotatingGeminiClient
+from memory import count_pairs
 
 log = logging.getLogger("qwen-bot")
 log.info("🚀 Booting Qwen assistant")
@@ -332,6 +333,10 @@ class QwenBot:
         # Gen QA for each table
         for t_idx, tbl in enumerate(tables):
             if t_idx >= 15: break  # limit max col-per-tables processed during cold-start
+            # Early-exit if table already has sufficient LTM entries
+            if count_pairs(tbl) >= 10:
+                log.warning(f"[{tbl}] Skipping cold-start — already has 10+ QA pairs.")
+                continue
             colnames = schema[tbl]
             colstr = ", ".join(colnames)
             log.info(f"[ColdStart] Generating QA for table: {tbl}")
