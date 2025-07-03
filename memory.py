@@ -127,20 +127,33 @@ def retrieve_sql(
     return [d for _, d in scored[:k]]
 
 # Save / get table context  (tiny docs per table)
-def save_table_context(tbl, ctx): db["table_context"].update_one(
-        {"tbl": tbl}, {"$set": {"context": ctx, "embedding": _embed(tbl)}}, upsert=True)
-def get_table_context(tbl: str) -> str:
+def save_table_context(tbl, ctx):
+    """
+    Save per-table summary context (as dict or JSON string) and embed table name + context for RAG.
+    """
+    if isinstance(ctx, dict): ctx_str = json.dumps(ctx)
+    else: ctx_str = ctx  # assume already a JSON string
+    embedding_source = ctx_str 
+    db["table_context"].update_one(
+        {"tbl": tbl},
+        {"$set": {
+            "context": ctx_str,
+            "embedding": _embed(embedding_source)
+        }},
+        upsert=True
+    )
+def get_table_context(tbl: str) -> dict:
     doc = db["table_context"].find_one({"tbl": tbl})
-    raw = doc["context"] if doc else ""
+    if not doc or "context" not in doc:
+        return {}
     try:
-        _ = json.loads(raw)
-        logging.info(f"[LTM] Loaded raw`{tbl}`: {raw}")
-        return raw
+        parsed = json.loads(doc["context"])
+        logging.info(f"[LTM] Loaded table context for `{tbl}`: {parsed}")
+        return parsed
     except Exception as e:
-        # purge corrupt doc so we don't reuse it
         db["table_context"].delete_one({"tbl": tbl})
-        log.warning(f"[memory] Removed invalid context for {tbl}")
-        return ""
+        log.warning(f"[memory] Invalid context for {tbl}, purged. Error: {e}")
+        return {}
 
 
 # ------------ SERVICES --------------------------------------------------

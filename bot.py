@@ -344,16 +344,17 @@ class QwenBot:
             valid_qa_pairs = [] # collect only validated entries
             # Generic prompt
             table_ctx = get_table_context(tbl)
-            table_desc = json.loads(table_ctx).get("description", "") if table_ctx else ""
-            example_qs = json.loads(table_ctx).get("example_questions", []) if table_ctx else []
+            table_desc = table_ctx.get("description", "")
+            example_qs = table_ctx.get("example_questions", [])
             cot_prompt = (
                 f"The table `{tbl}`, consisting of the columns `{colstr}`, has the following business description:\n{table_desc}\n\n"
                 "Generate 10 realistic business questions that can be answered using **only this table**.\n"
                 f"For each, include a **valid MySQL SQL query** that targets `{tbl}` only.\n\n"
                 "**IMPORTANT:** Return **only** a valid JSON array. No commentary. No markdown. Example:\n"
-                "[{{\"question\": \"...\", \"sql\": \"SELECT ... FROM {tbl} WHERE ...;\"}}, ...]"
+                f"[{{\"question\": \"...\", \"sql\": \"SELECT ... FROM {tbl} WHERE ...;\"}}, ...]"
             )
-            for i in range(rounds):  # <= NEW OUTER LOOP: multiple CoT rounds per table
+            log.info(f"Checkpoint cot_prompt {cot_prompt}")
+            for i in range(rounds):  # multiple CoT rounds per table
                 log.info(f"[{tbl}] CoT-Round {i+1}/{rounds}")
                 try:
                     cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
