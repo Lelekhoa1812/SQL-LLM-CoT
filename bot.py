@@ -278,7 +278,7 @@ class QwenBot:
                     else:
                         insight_prompt = (
                             f"Re-infer business insight.\n"
-                            f"Q: {question}\nSample rows from `{tbl}`:\n{rows[:5]}\n"
+                            f"Q: {question}\nSample rows from `{tbl}`:\n{rows[:2]}\n"
                             f"Prior failed attempts:\n{last_errors}\n"
                             "→ What insight does this new result support?"
                         )

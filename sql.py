@@ -1,5 +1,5 @@
 # sql.py
-import os, logging, re
+import os, logging, re, json
 from typing import List
 import numpy as np, pandas as pd
 # LLM
@@ -46,8 +46,15 @@ class GeminiVanna(VannaBase):
 
     # helper used by vanna-core for scoring:
     def score_sql(self, question: str, sql: str) -> float:
+        try:
+            rows = pd.read_sql(sa_text(sql + " LIMIT 2"), utils.ENGINE).to_dict(orient="records")
+        except Exception:
+            log.warning("[SQL scoring] tbl rows can't be fetched!")
+            rows = []
         p = (f"Score from 0-1 how well the SQL answers the question.\n"
              f"### Question\n{question}\n### SQL\n{sql}\n"
+             f"### SQL\n{sql}\n"
+             f"### Sample Output\n{json.dumps(rows[:2], indent=2)}\n\n"
              "Respond with a single number.")
         try:
             match = re.search(r"([01](?:\.\d+)?)", self.submit_prompt(p))
