@@ -1,5 +1,5 @@
 # base/base.py  ── light-weight FAISS-backed RAG helper
-import re, logging, numpy as np, faiss
+import re, logging, json, numpy as np, faiss
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict
 from sentence_transformers import SentenceTransformer
@@ -91,7 +91,10 @@ class VannaBase(ABC):
         # Choose examples priority: explicit list → 'shots' alias → self.similar_qa()
         examples = question_sql_list or shots or self.similar_qa(question)
         examples_txt = "\n\n".join(
-            f"-- {ex['question']}\n{ex['sql']}" for ex in examples if ex.get("sql")
+            f"-- {ex['question']}\n{ex['sql']}"
+            + (f"\n-- Sample Output:\n{json.dumps(ex.get('rows', [])[:2], indent=2)}"
+            if ex.get("rows") else "")
+            for ex in examples if ex.get("sql")
         )
         # Return executable SQL formatted JSON
         return (

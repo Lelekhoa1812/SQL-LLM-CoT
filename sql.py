@@ -46,10 +46,11 @@ class GeminiVanna(VannaBase):
 
     # helper used by vanna-core for scoring:
     def score_sql(self, question: str, sql: str) -> float:
+        rows = []
         try:
             rows = pd.read_sql(sa_text(sql + " LIMIT 2"), utils.ENGINE).to_dict(orient="records")
-        except Exception:
-            log.warning("[SQL scoring] tbl rows can't be fetched!")
+        except Exception as e:
+            log.warning(f"[SQL score_sql] SQL failed: {e}")
             rows = []
         p = (f"Score from 0-1 how well the SQL answers the question.\n"
              f"### Question\n{question}\n### SQL\n{sql}\n"
@@ -85,7 +86,7 @@ class GeminiVanna(VannaBase):
         try:
             rows = pd.read_sql(sa_text(sql), utils.ENGINE).to_dict(orient="records")
         except Exception as e:
-            log.warning(f"[add_question_sql] SQL failed: {e}")
+            log.warning(f"[SQL add_question_sql] SQL failed: {e}")
             rows = []
         super().add_question_sql(q, sql)
         for tbl in utils.db_schema():
