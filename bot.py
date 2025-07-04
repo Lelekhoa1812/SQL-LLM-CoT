@@ -112,6 +112,29 @@ class QwenBot:
         except Exception as e:
             log.error(f"[Gemini-Schema] Failed to generate schema summary: {e}")
             raise
+    
+    @retry_with_backoff(retries=3, delay=1.5)
+    def _llm_cot(self, prompt: str) -> str:
+        """Stateless CoT-specialized Gemini call: JSON generation only"""
+        cot_system_prompt = (
+            "You are a SQL training assistant.\n"
+            "Your job is to generate JSON arrays of business questions and SQL pairs "
+            "that operate on a single table using MySQL syntax.\n"
+            "NEVER include commentary, markdown, or prose. Output JSON only."
+        )
+        contents = [
+            Content(role="model", parts=[Part(text=cot_system_prompt)]),
+            Content(role="user", parts=[Part(text=prompt)])
+        ]
+        try:
+            rsp = genai_client.generate_content(
+                model=GEMINI_MODEL,
+                contents=contents
+            )
+            return _clean_json(getattr(rsp, "text", "") or "")
+        except Exception as e:
+            log.error(f"[Gemini-CoT] Failed: {e}")
+            raise
 
     # Hard reset on startup to avoid memory over-caching
     def reset_history(self):
