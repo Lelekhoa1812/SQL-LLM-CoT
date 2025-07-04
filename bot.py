@@ -351,11 +351,12 @@ class QwenBot:
                 "**IMPORTANT:** Return **only** a valid JSON array. No commentary. No markdown. Example:\n"
                 f"[{{\"question\": \"...\", \"sql\": \"SELECT ... FROM {tbl} WHERE ...;\"}}, ...]"
             )
-            log.info(f"Checkpoint cot_prompt {cot_prompt}")
+            log.info(f"Checkpoint cot_prompt: {cot_prompt}")
             for i in range(rounds):  # multiple CoT rounds per table
                 log.info(f"[{tbl}] CoT-Round {i+1}/{rounds}")
                 try:
                     cot_raw = await asyncio.to_thread(self._llm, cot_prompt)
+                    log.info(f"Checkpoint cot_raw: {cot_raw}")
                     if not cot_raw.strip().startswith("[") or "{" not in cot_raw:
                         raise ValueError(f"[{tbl} - CoT {i+1}/{rounds}] Likely not a JSON array, intervene response again!")
                     # log.info(f"[{tbl} - CoT {i+1}/{rounds}] Raw CoT response: {cot_raw}")

@@ -155,7 +155,6 @@ def get_table_context(tbl: str) -> dict:
         log.warning(f"[memory] Invalid context for {tbl}, purged. Error: {e}")
         return {}
 
-
 # ------------ SERVICES --------------------------------------------------
 # Maintenance
 def clear_all():
