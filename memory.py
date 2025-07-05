@@ -30,6 +30,8 @@ def _get_collection(name: str):
     col = db[name]
     if "norm_sql_1" not in col.index_information():
         col.create_index([("norm_sql", ASCENDING)])
+    if "expire_at_1" not in col.index_information():
+        col.create_index([("expire_at", ASCENDING)], expireAfterSeconds=60 * 60 * 24 * 90)  # 90d
     return col
 
 # ───────── Helpers
