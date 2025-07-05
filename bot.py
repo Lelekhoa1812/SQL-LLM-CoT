@@ -155,6 +155,18 @@ class QwenBot:
             if SequenceMatcher(None, sql_norm, s).ratio() > thresh:
                 return True
         return False
+    
+    @staticmethod
+    def _validate_sql_json(qa_pairs: list[dict]) -> list[dict]:
+        valid = []
+        for pair in qa_pairs:
+            q, s = pair.get("question", "").strip(), pair.get("sql", "").strip()
+            if not q or not s or "select" not in s.lower():
+                continue
+            if not s.endswith(";"): s += ";"
+            valid.append({"question": q, "sql": s})
+        return valid
+
 
     async def _schema_reason(self, text: str) -> list[str]:
         """
@@ -385,6 +397,7 @@ class QwenBot:
                     # log.info(f"[{tbl} - CoT {i+1}/{rounds}] Raw CoT response: {cot_raw}")
                     try:
                         qa_pairs = json.loads(_clean_json(cot_raw))
+                        qa_pairs = self._validate_sql_json(qa_pairs)
                         if (not qa_pairs or len(qa_pairs) == 0) and example_qs:
                             log.warning(f"[{tbl}] ❗ Falling back to example_questions")
                             qa_pairs = [{"question": q, "sql": f"SELECT * FROM {tbl} LIMIT 10;"} for q in example_qs[:10]]

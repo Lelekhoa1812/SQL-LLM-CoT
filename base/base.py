@@ -2,11 +2,10 @@
 import os, re, logging, json, numpy as np, faiss
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict
-from sentence_transformers import SentenceTransformer
-import memory                         # our Mongo LTM wrapper
+import memory  # Mongo LTM wrapper
+from embedder import _embed
 
 log   = logging.getLogger("vanna-base")
-_EMB  = SentenceTransformer("all-MiniLM-L6-v2")   # 384-d
 _DIM  = 384
 
 class VannaBase(ABC):
@@ -23,10 +22,6 @@ class VannaBase(ABC):
         self._examples: List[Dict] = []      # [{q, sql, vec}]
         self._ddl:  List[str] = []
         self._docs: List[str] = []
-
-    # ---------- Embedding ---------------------------------------------------------
-    def _embed(self, txt: str) -> np.ndarray: # shape (384,...)
-        return _EMB.encode(txt, normalize_embeddings=True)
 
     # ---------- RAG memory---------------------------------------------------------
     def add_question_sql(self, q: str, sql: str):
@@ -115,6 +110,7 @@ class VannaBase(ABC):
             f"### DOCS ###\n{doc_text}\n"
             f"### EXAMPLES ###\n{examples_txt}\n\n"
             f"### QUESTION ###\n{question}\n\n"
+            "### SQL:\n"  # control token for structured decoding
             "Respond with ONLY the executable SQL."
         )
     

@@ -9,15 +9,10 @@ from pymongo import MongoClient, ASCENDING
 import os
 os.environ["HF_HOME"] = "/tmp/hf_cache"  # write-safe
 os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/tmp/hf_cache/sentence-transformers"
-from sentence_transformers import SentenceTransformer
+from embedder import _embed
 
 log = logging.getLogger("memory-log")
 log.info("🚀 Starting memory handler...")
-
-# Embedding model
-EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-def _embed(txt: str):   # returns list[float]
-    return EMBED_MODEL.encode([txt], normalize_embeddings=True)[0].tolist()
 
 # -------- STM: in-process LRU cache -----------
 STM = LRUCache(maxsize=128)
