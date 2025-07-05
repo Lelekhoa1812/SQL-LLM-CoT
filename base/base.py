@@ -3,7 +3,7 @@ import os, re, logging, json, numpy as np, faiss
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict
 import memory  # Mongo LTM wrapper
-from embedder import _embed
+from embedder import _embed_np
 
 log   = logging.getLogger("vanna-base")
 _DIM  = 384
@@ -29,7 +29,7 @@ class VannaBase(ABC):
         if any(re.sub(r"[\W_]+", "", ex["q"].lower()) == norm_q for ex in self._examples):
             log.info(f"[FAISS] Skipping duplicate: {q[:60]}")
             return
-        vec = self._embed(q).astype("float32")
+        vec = _embed_np(q).astype("float32")
         self._examples.append({"q": q, "sql": sql, "vec": vec})
         self._index.add(vec[None, :])
 
@@ -39,7 +39,7 @@ class VannaBase(ABC):
     def similar_qa(self, question: str, k: int = 3) -> List[Dict]:
         if self._index.ntotal == 0:
             return []
-        D, I = self._index.search(self._embed(question)[None, :], k)
+        D, I = self._index.search(_embed_np(question)[None, :], k)
         return [ {
                 "question": self._examples[i]["q"],
                 "sql": self._examples[i]["sql"],
