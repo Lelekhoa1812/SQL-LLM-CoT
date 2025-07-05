@@ -1,5 +1,6 @@
 # memory.py
 import os, logging, re, uuid, json, numpy as np
+from datetime import datetime, timedelta
 
 # DBs
 from cachetools import LRUCache
@@ -85,7 +86,8 @@ def add_sql_pair(
         "norm_sql"  : norm,
         "embedding" : _embed(question),
         "rows"      : rows[:2_000],
-        "answer"    : answer
+        "answer"    : answer,
+        "expire_at" : datetime.utcnow() + timedelta(days=90)
     }
     col.insert_one(doc)
     log.info(f"[LTM] ✅ Inserted new pair into `{coll_name}`: {question[:60]}")
