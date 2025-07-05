@@ -25,6 +25,7 @@ MODEL = "gemini-2.5-flash-preview-04-17"
 class GeminiVanna(VannaBase):
     def __init__(self):
         super().__init__() 
+        self.load_index("faiss_index.bin")
         self.client = RotatingGeminiClient()
         self.dialect = "mysql"
         schema = utils.db_schema() # preload DDL from schema so get_sql_prompt() has context
@@ -57,7 +58,7 @@ class GeminiVanna(VannaBase):
             log.warning(f"[SQL score_sql] SQL failed: {e}")
             rows = []
         p = (f"Score from 0-1 how well the SQL answers the question.\n"
-             f"### Question\n{question}\n### SQL\n{sql}\n"
+             f"### Question\n{question}\n"
              f"### SQL\n{sql}\n"
              f"### Sample Output\n{json.dumps(rows[:2], indent=2)}\n\n"
              "Respond with a single number.")

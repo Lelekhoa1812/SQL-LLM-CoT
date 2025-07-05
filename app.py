@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from bot import QwenBot
 from memory import start_up_create_indexes
+from sql import vanna 
 # from translation import a_vie_to_en, a_en_to_vie
 # from utils import execute_sql
 
@@ -36,3 +37,7 @@ async def query(req: Query):
     except Exception as e:
         log.exception("[App] ❌ Failed to answer")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.on_event("shutdown")
+def shutdown():
+    vanna.save_index("faiss_index.bin")
