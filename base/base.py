@@ -1,5 +1,5 @@
 # base/base.py  ── light-weight FAISS-backed RAG helper
-import re, logging, json, numpy as np, faiss
+import os, re, logging, json, numpy as np, faiss
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict
 from sentence_transformers import SentenceTransformer
@@ -30,6 +30,10 @@ class VannaBase(ABC):
 
     # ---------- RAG memory---------------------------------------------------------
     def add_question_sql(self, q: str, sql: str):
+        norm_q = re.sub(r"[\W_]+", "", q.lower())
+        if any(re.sub(r"[\W_]+", "", ex["q"].lower()) == norm_q for ex in self._examples):
+            log.info(f"[FAISS] Skipping duplicate: {q[:60]}")
+            return
         vec = self._embed(q).astype("float32")
         self._examples.append({"q": q, "sql": sql, "vec": vec})
         self._index.add(vec[None, :])
@@ -47,6 +51,14 @@ class VannaBase(ABC):
                 }
             for i in I[0] if i != -1
         ]
+    
+    def save_index(self, path: str = "faiss_index.bin"):
+        faiss.write_index(self._index, path)
+
+    def load_index(self, path: str = "faiss_index.bin"):
+        if os.path.exists(path):
+            self._index = faiss.read_index(path)
+
 
     # ---------- Prompt helpers ----------------------------------------------
     @staticmethod
