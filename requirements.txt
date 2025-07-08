@@ -31,5 +31,6 @@ db-sqlite3
 pandas
 # plotly
 python-abc
+pyodbc
 tenacity
 clickhouse-connect

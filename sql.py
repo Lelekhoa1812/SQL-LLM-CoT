@@ -150,7 +150,11 @@ async def run_and_score(question: str, sqls: List[str]):
         best_sql if re.search(r"\blimit\b", best_sql, re.I)
         else best_sql.rstrip(";") + " LIMIT 1000;"
     )
-    # Read SQL save records to dict
-    rows = await utils.async_execute(safe_sql)
+    # Read SQL save records to dict, try async first, fallback to sync
+    try:
+        rows = await utils.async_execute(safe_sql)
+    except Exception as e:
+        log.error("Fallback to sync SQL execution due to async error: %s", e)
+        rows = utils.execute_sql(safe_sql)
     return best_sql, rows
 

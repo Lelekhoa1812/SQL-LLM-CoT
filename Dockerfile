@@ -15,6 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     git \
     curl && \
+    # --- Start of MSSQL section ---
+    gnupg \
+    apt-transport-https \
+    unixodbc \
+    unixodbc-dev \
+    gcc \
+    g++ \
+    && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
+    && curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update && ACCEPT_EULA=Y apt-get install -y msodbcsql17 \
+    # --- End of MSSQL section ---
     rm -rf /var/lib/apt/lists/*
 
 # ─── Python Dependencies ───────────────────────────────────────
