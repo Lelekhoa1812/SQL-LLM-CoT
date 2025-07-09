@@ -3,7 +3,7 @@ import os, logging, re, json
 from typing import List
 import numpy as np, pandas as pd
 # LLM
-from base.base import VannaBase  # Custom lightweight Vanna
+from base import VannaBase  # Custom lightweight Vanna
 from google import genai  
 # Util services
 from llm_ut import retry_with_backoff

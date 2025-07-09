@@ -1,5 +1,4 @@
-# Dockerfile
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 # ─── Environment Setup ─────────────────────────────────────────
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -11,50 +10,51 @@ WORKDIR /app
 
 # ─── System Dependencies ───────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 \
-    libglib2.0-0 \
-    git \
-    curl && \
-    # --- Start of MSSQL section ---
+    curl \
     gnupg \
-    apt-transport-https \
+    ca-certificates \
+    apt-transport-https && \
+    curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/trusted.gpg.d/microsoft.gpg && \
+    curl -sSL https://packages.microsoft.com/config/debian/11/prod.list -o /etc/apt/sources.list.d/mssql-release.list && \
+    apt-get update && \
+    apt-get remove -y libodbc2 libodbcinst2 unixodbc-common && \
+    ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
+    msodbcsql17 \
     unixodbc \
     unixodbc-dev \
     gcc \
     g++ \
-    && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
-    && curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list \
-    && apt-get update && ACCEPT_EULA=Y apt-get install -y msodbcsql17 \
-    # --- End of MSSQL section ---
-    rm -rf /var/lib/apt/lists/*
+    git \
+    libgl1 \
+    libglib2.0-0 \
+    libltdl-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ─── Python Dependencies ───────────────────────────────────────
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# Create non-root user
+# ─── Create non-root user ──────────────────────────────────────
 RUN useradd -m -u 1000 user
 
-# Create all needed cache paths and fix permissions for non-root user
+# Create all needed cache paths and fix permissions
 RUN mkdir -p /app \
     && mkdir -p /app/.cache/huggingface/hub \
     && mkdir -p /app/model_cache \
     && mkdir -p /app/history \
     && chown -R user:user /app
 
-# ─── Model preloader ───────────────────────────────────────────
-# RUN python -c "from transformers import AutoModelForSequenceClassification; AutoModelForSequenceClassification.from_pretrained('jinaai/jina-reranker-v2-base-multilingual', revision='8469b0a', trust_remote_code=True)"
-# RUN python -c "from transformers import AutoModelForCausalLM; AutoModelForCausalLM.from_pretrained('Qwen/Qwen3-4B', trust_remote_code=True)"
+# ─── Preload model ─────────────────────────────────────────────
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-# Copy project files
+# ─── Copy App ──────────────────────────────────────────────────
 COPY . .
 
-# Batch HF model caching
+# ─── HF Model cache ────────────────────────────────────────────
 RUN mkdir -p /tmp/hf_cache && chown -R user:user /tmp/hf_cache
 
-# Switch to non-root user (important AFTER chown)
+# ─── Switch to non-root user ───────────────────────────────────
 USER user
 
-# ─── Run Server ────────────────────────────────────────────────
+# ─── Run the API ───────────────────────────────────────────────
 CMD ["gunicorn", "app:app", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7860"]

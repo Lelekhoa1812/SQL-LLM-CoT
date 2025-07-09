@@ -1,8 +1,10 @@
-import numpy as np
+import os, numpy as np
 from sentence_transformers import SentenceTransformer
 
-EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-
+model_name = "all-MiniLM-L6-v2"
+hf_token = os.getenv("HF_TOKEN")
+EMBED_MODEL = SentenceTransformer(model_name, use_auth_token=hf_token)
+                                  
 def _embed(text: str) -> list[float]:
     return EMBED_MODEL.encode([text], normalize_embeddings=True)[0].tolist()
 
