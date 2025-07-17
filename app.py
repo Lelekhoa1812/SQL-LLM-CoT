@@ -1,5 +1,6 @@
 # Root API: https://binkhoale1812-cpg-chatbot.hf.space/
 # DB: https://www.freesqldatabase.com/account/
+# Boot: docker run --env-file .env --network host -p 7860:7860 my-mssql-app
 import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel

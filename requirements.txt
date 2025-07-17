@@ -8,6 +8,7 @@ torch
 accelerate
 einops
 cachetools
+huggingface_hub
 
 # LLM
 google-genai
